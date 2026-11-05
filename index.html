@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qraan — تسجيل الدخول</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="logo">
+      <div class="mark">ق</div>
+      <div class="brand">Qraan</div>
+      <div class="muted small" id="academyName">نظام إدارة حلقات التحفيظ</div>
+    </div>
+
+    <!-- إعداد أول مرة -->
+    <form id="setupForm" class="hidden">
+      <div class="note">أول تشغيل: أنشئ حساب المدير.</div>
+      <div class="field"><label>اسم الأكاديمية</label><input name="academy" required value="أكاديمية Qraan"></div>
+      <div class="field"><label>البريد الإلكتروني للمدير</label><input name="email" type="email" required autocomplete="username"></div>
+      <div class="field"><label>كلمة المرور (6 أحرف على الأقل)</label><input name="password" type="password" minlength="6" required autocomplete="new-password"></div>
+      <div class="row">
+        <div class="field"><label>رقم واتساب الأكاديمية</label><input name="whatsapp" placeholder="01xxxxxxxxx"></div>
+        <div class="field"><label>بلد المدير</label><select name="adminCountry"></select></div>
+      </div>
+      <button class="btn block">إنشاء الحساب والدخول</button>
+    </form>
+
+    <!-- تسجيل الدخول -->
+    <div id="loginBox" class="hidden">
+      <div class="seg">
+        <button type="button" data-tab="teacher" class="active">محفظ</button>
+        <button type="button" data-tab="admin">المدير</button>
+      </div>
+      <form id="teacherForm">
+        <div class="field"><label>اسم المستخدم</label><input name="username" required autocomplete="username"></div>
+        <div class="field"><label>الرقم الخاص بك</label><input name="code" inputmode="numeric" required></div>
+        <button class="btn block">دخول</button>
+      </form>
+      <form id="adminForm" class="hidden">
+        <div class="field"><label>البريد الإلكتروني</label><input name="email" type="email" required autocomplete="username"></div>
+        <div class="field"><label>كلمة المرور</label><input name="password" type="password" required autocomplete="current-password"></div>
+        <button class="btn block">دخول لوحة التحكم</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script src="core.js"></script>
+<script>
+  const db = Store.load(), S = db.settings;
+  $('#academyName').textContent = S.academy;
+  $('[name=adminCountry]').innerHTML = countryOptions('EG');
+
+  // توجيه تلقائي لو فيه جلسة مفتوحة
+  const ses = Session.get();
+  if (ses?.role === 'admin') location.href = 'admin.html';
+  else if (ses?.role === 'teacher' && Store.teacher(ses.id)) location.href = 'teacher.html';
+
+  if (!S.adminHash) $('#setupForm').classList.remove('hidden');
+  else $('#loginBox').classList.remove('hidden');
+
+  $$('.seg button').forEach(b => b.onclick = () => {
+    $$('.seg button').forEach(x => x.classList.toggle('active', x === b));
+    $('#teacherForm').classList.toggle('hidden', b.dataset.tab !== 'teacher');
+    $('#adminForm').classList.toggle('hidden', b.dataset.tab !== 'admin');
+  });
+
+  $('#setupForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    Object.assign(S, {
+      academy: f.academy.trim(), adminEmail: f.email.trim().toLowerCase(),
+      adminHash: await sha256(f.password), whatsapp: f.whatsapp.trim(), adminCountry: f.adminCountry,
+    });
+    Store.save(); Session.set({ role: 'admin' }); location.href = 'admin.html';
+  };
+
+  $('#adminForm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    if (f.email.trim().toLowerCase() === S.adminEmail && await sha256(f.password) === S.adminHash) {
+      Session.set({ role: 'admin' }); location.href = 'admin.html';
+    } else toast('البريد أو كلمة المرور غير صحيحة', true);
+  };
+
+  $('#teacherForm').onsubmit = e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const t = db.teachers.find(x => x.username.toLowerCase() === f.username.trim().toLowerCase() && String(x.code) === f.code.trim());
+    if (!t) return toast('اسم المستخدم أو الرقم غير صحيح', true);
+    if (t.active === false) return toast('الحساب موقوف — تواصل مع الإدارة', true);
+    Session.set({ role: 'teacher', id: t.id }); location.href = 'teacher.html';
+  };
+</script>
+</body>
+</html>

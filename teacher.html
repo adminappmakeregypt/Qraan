@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Qraan — صفحة المحفظ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">Qraan</div>
+    <nav id="nav">
+      <button data-tab="students" class="active">🎓 طلابي</button>
+      <button data-tab="week">🗓️ جدولي</button>
+      <button data-tab="history">📝 تقاريري</button>
+      <button onclick="logout()">↩︎ خروج</button>
+    </nav>
+    <div class="foot" id="sideFoot"></div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+<script src="core.js"></script>
+<script src="teacher.js"></script>
+</body>
+</html>
