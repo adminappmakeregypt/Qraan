@@ -84,31 +84,21 @@ function schedule() {
   ${expired.length ? `<div class="note">طلاب اشتراكهم منتهي (لا محاضرات لهم حتى التجديد): ${expired.map(s => esc(s.name)).join('، ')}</div>` : ''}`;
 }
 
-function mark(key, attendance) {
+async function mark(key, attendance) {
   const o = _occ.find(x => x.key === key);
   if (!o) return toast('المحاضرة غير موجودة', true);
   try {
     const { msgs } = recordSession(o.st, me, o, attendance);
-    if (S.teacherCanSend) return afterSubmit(o.st, msgs);
-    const ended = msgs.some(m => m.kind === 'renew');
-    toast(ended ? 'تم التسجيل — انتهت باقة الطالب' : `تم التسجيل: ${ATT[attendance]}`);
     render();
+    if (!msgs.length) return toast(`تم التسجيل: ${ATT[attendance]}`);
+    const r = await deliver(msgs[0]);
+    toast(r === 'sent' ? 'آخر محاضرة في الباقة — تم إرسال تذكير الاشتراك لولي الأمر ✅'
+      : r === 'failed' ? 'آخر محاضرة — تعذر إرسال الواتساب، ستتابعه الإدارة' : 'آخر محاضرة في الباقة — تم إبلاغ الإدارة', r === 'failed');
   } catch (err) { toast(err.message, true); }
 }
 function undo(repId) {
   if (!confirmBox('إلغاء تسجيل هذه المحاضرة؟')) return;
   undoSession(repId); toast('تم الإلغاء'); render();
-}
-
-function afterSubmit(s, msgs) {
-  const ended = msgs.some(m => m.kind === 'renew');
-  openModal('تم تسجيل المحاضرة', `
-    <p>المحاضرات المتبقية للطالب ${esc(s.name)}: <b>${s.remaining}</b></p>
-    ${ended ? '<div class="note">كانت هذه آخر محاضرة في الباقة — أُضيفت رسالة تذكير بالاشتراك لولي الأمر.</div>' : ''}
-    ${msgs.map(m => `<div style="margin-bottom:10px">${kindPill(m.kind)}<div class="msg-preview" style="margin-top:6px">${esc(m.text)}</div>
-      <button class="btn sm wa" style="margin-top:6px" onclick="sendWhatsApp('${m.id}');this.disabled=true;this.textContent='تم الفتح في واتساب'">إرسال لولي الأمر</button></div>`).join('')}`,
-    `<button class="btn" onclick="closeModal();render()">تم</button>`);
-  $('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal') render(); });
 }
 
 /* =============== طلابي =============== */

@@ -170,7 +170,6 @@ function sessionModal(teacherId, day, studentId, slotIdx) {
         <div class="field"><label>بأي توقيت؟</label><select name="base"></select></div>
       </div>
       <div id="smPrev"></div>
-      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إرسال المواعيد لولي الأمر</label></div>
     </form>`,
     `<button class="btn" form="smf">${editing ? 'حفظ التعديل' : 'إضافة الحصة'}</button>
      ${editing ? `<button class="btn danger" type="button" id="smDel">حذف الحصة</button>` : ''}
@@ -211,7 +210,6 @@ function sessionModal(teacherId, day, studentId, slotIdx) {
     if (editing) st.slots[slotIdx] = { day: ns.day, time: ns.time, since: Date.now() };
     else (st.slots ||= []).push({ day: ns.day, time: ns.time, since: Date.now() });
     Store.save();
-    if (f.send.checked && isActive(st)) queueSchedule(st);
     closeModal(); toast(editing ? 'تم التعديل' : 'تمت إضافة الحصة'); render();
   };
 }
@@ -245,7 +243,6 @@ function addExtraForm(id) {
       <div id="aefPrev"></div>
       <div class="field"><label><input type="checkbox" name="addOne" style="width:auto" ${st.remaining <= 0 ? 'checked' : ''}> إضافة محاضرة لرصيد الباقة أيضًا (محاضرة مدفوعة زيادة)</label>
         <p class="muted small" style="margin:2px 0 0">لو غير مُفعّل، المحاضرة تُخصم من الرصيد الحالي (${st.remaining} متبقية) — مثل محاضرة تعويضية.</p></div>
-      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إبلاغ ولي الأمر</label></div>
     </form>`,
     `<button class="btn" form="aef">إضافة المحاضرة</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
   const f = $('#aef'), upd = () => { $('#aefPrev').innerHTML = tzPreview(st, t, f.date.value, f.time.value, f.base.value, true).html; };
@@ -258,11 +255,6 @@ function addExtraForm(id) {
     if (!isActive(st)) return toast('رصيد الطالب صفر — فعّل «إضافة محاضرة لرصيد الباقة» أو جدد الاشتراك', true);
     (st.extra ||= []).push({ id: uid(), ts: p.ts, createdAt: Date.now() });
     Store.save();
-    if (f.send.checked) {
-      const l = localOf(p.ts, st.country);
-      queueMessage('schedule', st, fill(S.tplExtra, msgVars(st, { dayname: DAYS[l.day], date: l.iso, time: fmtTime(l.time) })));
-      Store.save();
-    }
     closeModal(); toast('تمت إضافة المحاضرة'); render();
   };
 }
@@ -288,7 +280,6 @@ function moveStudentForm(toTeacher, studentId) {
         ${candidates.map(s => `<option value="${s.id}">${esc(s.name)} — ${s.teacherId ? 'حاليًا مع ' + teacherName(s.teacherId) : 'بدون محفظ'}</option>`).join('')}</select></div>`}
       <div class="field"><label>المحفظ الجديد</label><select name="tid" required>${db.teachers.filter(x => !st || x.id !== st.teacherId).map(x => `<option value="${x.id}" ${x.id === toTeacher ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
       <p class="muted small">المحاضرات المسجلة سابقًا تبقى في سجل المحفظ القديم. المواعيد تنتقل كما هي.</p>
-      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إرسال المواعيد لولي الأمر باسم المحفظ الجديد</label></div>
     </form>`,
     `<button class="btn" form="mvf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
   $('#mvf').onsubmit = e => {
@@ -296,7 +287,6 @@ function moveStudentForm(toTeacher, studentId) {
     const s2 = st || Store.student(e.target.sid.value);
     if (!s2) return toast('اختر الطالب', true);
     s2.teacherId = e.target.tid.value; Store.save();
-    if (e.target.send.checked && isActive(s2) && s2.slots?.length) queueSchedule(s2);
     asg.teacher = s2.teacherId; closeModal(); toast('تم'); render();
   };
 }
@@ -398,7 +388,6 @@ function students() {
       <td><div class="actions">
         <button class="btn sm ghost" onclick="studentForm('${s.id}')">تعديل</button>
         <button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>
-        <button class="btn sm ghost" onclick="sendSchedule('${s.id}')">إرسال المواعيد</button>
         <button class="btn sm ghost" onclick="studentLog('${s.id}')">السجل</button>
         <button class="btn sm danger" onclick="delStudent('${s.id}')">حذف</button></div></td>
     </tr>`).join('')}
@@ -456,7 +445,6 @@ function studentForm(id, presetTeacher) {
         <div class="field"><label>رابط الحلقة (Zoom / Meet) — اختياري</label><input name="link" dir="ltr" placeholder="https://" value="${esc(s.link || '')}"></div>
       </div>
       <div class="field"><label>ملاحظات تظهر للمحفظ</label><textarea name="notes" style="min-height:60px" placeholder="مثال: يحفظ حاليًا جزء عمّ">${esc(s.notes)}</textarea></div>
-      ${id ? '' : '<div class="field"><label><input type="checkbox" name="sendSched" style="width:auto" checked> إضافة رسالة المواعيد لولي الأمر في صندوق الرسائل</label></div>'}
     </form>`,
     `<button class="btn" form="sf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
   const f = $('#sf');
@@ -475,7 +463,6 @@ function studentForm(id, presetTeacher) {
     if (id) { st = Object.assign(s, data); }
     else { st = { id: uid(), createdAt: Date.now(), attended: 0, absent: 0, excused: 0, renewals: [], ...data }; db.students.push(st); }
     Store.save();
-    if (!id && d.sendSched && st.slots.length && isActive(st)) queueSchedule(st);
     closeModal(); toast('تم الحفظ'); render();
   };
 }
@@ -486,14 +473,12 @@ function renewForm(id) {
     <form id="rf">
       <p class="muted">المتبقي حاليًا: <b>${s.remaining}</b> — الحالة: ${statusPill(s)}</p>
       <div class="field"><label>عدد محاضرات الباقة الجديدة</label><input name="n" type="number" min="1" value="${s.total || S.defaultLectures}" required></div>
-      <div class="field"><label><input type="checkbox" name="sched" style="width:auto" ${s.slots?.length ? 'checked' : ''}> إرسال المواعيد لولي الأمر بعد التجديد</label></div>
     </form>`,
     `<button class="btn gold" form="rf">تأكيد الدفع والتجديد</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
   $('#rf').onsubmit = e => {
     e.preventDefault();
     const d = Object.fromEntries(new FormData(e.target));
     renewStudent(s, d.n);
-    if (d.sched && s.slots?.length) queueSchedule(s);
     closeModal(); toast('تم تجديد الاشتراك'); render();
   };
 }
@@ -639,7 +624,11 @@ function lecDetail(T, inMonth, nowM) {
 function adminEdit(id, att) { editSession(id, att); toast('تم تعديل الحضور'); render(); }
 function adminRecord(i, att) {
   const o = _missed[i]; if (!o) return;
-  try { const { rep } = recordSession(o.st, Store.teacher(o.st.teacherId), o, att); rep.byAdmin = true; Store.save(); toast('تم التسجيل'); render(); }
+  try {
+    const { rep, msgs } = recordSession(o.st, Store.teacher(o.st.teacherId), o, att); rep.byAdmin = true; Store.save(); render();
+    if (msgs.length) deliver(msgs[0]).then(r => { toast(r === 'sent' ? 'آخر محاضرة — أُرسل تذكير الاشتراك ✅' : 'آخر محاضرة — الرسالة في صندوق واتساب', r === 'failed'); render(); });
+    else toast('تم التسجيل');
+  }
   catch (e) { toast(e.message, true); }
 }
 function adminUndo(id) {
@@ -659,27 +648,40 @@ function exportLectures() {
   a.download = `qraan-lectures-${lec.month || 'all'}.csv`; a.click();
 }
 
-/* =============== صندوق رسائل واتساب =============== */
+/* =============== رسائل واتساب =============== */
 let outTab = 'pending';
 function outbox() {
   const list = db.outbox.filter(m => m.status === outTab).sort((a, b) => outTab === 'pending' ? a.createdAt - b.createdAt : b.createdAt - a.createdAt);
   const pc = db.outbox.filter(m => m.status === 'pending').length;
+  const api = S.waMode === 'api';
   return `
   <div class="topbar"><h2>رسائل واتساب</h2>
-    <div class="seg" style="margin:0;min-width:260px"><button class="${outTab === 'pending' ? 'active' : ''}" onclick="outTab='pending';render()">في الانتظار (${pc})</button><button class="${outTab === 'sent' ? 'active' : ''}" onclick="outTab='sent';render()">المُرسلة</button></div></div>
-  <div class="note">افتح هذه الصفحة من الجهاز المسجل عليه واتساب الأكاديمية ${S.whatsapp ? `(<span dir="ltr">${esc(S.whatsapp)}</span>)` : ''} — زر «إرسال» يفتح المحادثة مع ولي الأمر والرسالة جاهزة، اضغط إرسال في واتساب.</div>
+    <div class="seg" style="margin:0;min-width:260px"><button class="${outTab === 'pending' ? 'active' : ''}" onclick="outTab='pending';render()">لم تُرسل (${pc})</button><button class="${outTab === 'sent' ? 'active' : ''}" onclick="outTab='sent';render()">المُرسلة</button></div></div>
+  <div class="note">${api ? '✅ الإرسال التلقائي عبر WhatsApp Business API مفعّل — الرسالة تُرسل لولي الأمر فور تسجيل آخر محاضرة في الباقة. هنا تظهر الرسائل التي فشل إرسالها لإعادة المحاولة.'
+    : '⚠️ الإرسال التلقائي غير مفعّل — فعّله من «الإعدادات ← ربط واتساب». حاليًا تُرسل الرسالة يدويًا بزر واتساب.'}
+    <br><span class="small">الرسالة الوحيدة: تُرسل لولي الأمر عند انتهاء آخر محاضرة في الباقة.</span></div>
+  ${pc > 1 && api && outTab === 'pending' ? `<button class="btn" style="margin-bottom:12px" onclick="retryAll()">إعادة إرسال الكل (${pc})</button>` : ''}
   ${list.length ? list.map(m => `<div class="card">
       <div class="topbar" style="margin-bottom:8px"><div>${kindPill(m.kind)} <b>${esc(m.studentName)}</b> <span class="muted small" dir="ltr">+${esc(m.phone)}</span></div>
-      <span class="muted small">${fmtDateTime(m.sentAt || m.createdAt)}</span></div>
+      <span class="muted small">${fmtDateTime(m.sentAt || m.createdAt)}${m.via === 'api' ? ' · عبر API' : m.status === 'sent' ? ' · يدوي' : ''}</span></div>
       <div class="msg-preview">${esc(m.text)}</div>
+      ${m.error ? `<div class="note small" style="background:var(--danger-soft);border-color:#f0c9c4;margin:8px 0 0">فشل الإرسال: ${esc(m.error)}</div>` : ''}
       <div class="actions" style="display:flex;gap:6px;margin-top:10px">
-        <button class="btn sm wa" onclick="sendWhatsApp('${m.id}');render()">${m.status === 'sent' ? 'إعادة الإرسال' : 'إرسال عبر واتساب'}</button>
-        ${m.status === 'pending' ? `<button class="btn sm ghost" onclick="markSent('${m.id}');render()">تم الإرسال يدويًا</button>` : ''}
-        <button class="btn sm ghost" onclick="navigator.clipboard.writeText(${esc(JSON.stringify(m.text))}).then(()=>toast('تم النسخ'))">نسخ</button>
+        ${api && m.status === 'pending' ? `<button class="btn sm" onclick="retryOne('${m.id}')">إرسال عبر API</button>` : ''}
+        <button class="btn sm wa" onclick="sendWhatsApp('${m.id}');render()">${m.status === 'sent' ? 'إعادة الإرسال يدويًا' : 'إرسال يدوي (واتساب)'}</button>
+        ${m.status === 'pending' ? `<button class="btn sm ghost" onclick="markSent('${m.id}');render()">تم الإرسال</button>` : ''}
         <button class="btn sm danger" onclick="delMsg('${m.id}')">حذف</button>
       </div></div>`).join('') : '<div class="card empty">لا توجد رسائل.</div>'}`;
 }
 function delMsg(id) { db.outbox = db.outbox.filter(m => m.id !== id); Store.save(); render(); }
+async function retryOne(id) {
+  const m = db.outbox.find(x => x.id === id); if (!m) return;
+  const r = await deliver(m); toast(r === 'sent' ? 'تم الإرسال ✅' : 'فشل: ' + (m.error || ''), r !== 'sent'); render();
+}
+async function retryAll() {
+  let ok = 0; for (const m of db.outbox.filter(x => x.status === 'pending')) if (await deliver(m) === 'sent') ok++;
+  toast(`تم إرسال ${ok} رسالة`); render();
+}
 
 /* =============== الإعدادات =============== */
 function settings() {
@@ -696,14 +698,40 @@ function settings() {
       <div class="field"><label>عدد محاضرات الباقة الافتراضي</label><input name="defaultLectures" type="number" min="1" value="${S.defaultLectures}"></div>
     </div>
     <div class="field"><label><input type="checkbox" name="absentCounts" style="width:auto" ${S.absentCounts ? 'checked' : ''}> «لم يحضر» يُخصم من محاضرات الباقة</label></div>
-    <div class="field"><label><input type="checkbox" name="teacherCanSend" style="width:auto" ${S.teacherCanSend ? 'checked' : ''}> السماح للمحفظ بإرسال التقرير من واتساب هاتفه مباشرة</label></div>
-    <h3 style="margin-top:10px">قوالب الرسائل</h3>
-    <p class="muted small">المتغيرات: {student} {parent} {teacher} {dayname} {date} {time} {attendance} {remaining} {total} {schedule} {country} {academy}</p>
-    <div class="field"><label>رسالة الحضور (بعد كل محاضرة)</label><textarea name="tplSession" rows="8">${esc(S.tplSession)}</textarea></div>
-    <div class="field"><label>رسالة تذكير الاشتراك (مع آخر محاضرة)</label><textarea name="tplRenew" rows="6">${esc(S.tplRenew)}</textarea></div>
-    <div class="field"><label>رسالة المحاضرة الإضافية</label><textarea name="tplExtra" rows="5">${esc(S.tplExtra)}</textarea></div>
-    <div class="field"><label>رسالة المواعيد</label><textarea name="tplSchedule" rows="6">${esc(S.tplSchedule)}</textarea></div>
+    <h3 style="margin-top:10px">رسالة واتساب (انتهاء الباقة)</h3>
+    <p class="muted small">تُرسل لولي الأمر تلقائيًا عند تسجيل آخر محاضرة في الباقة. هذه هي الرسالة الوحيدة في النظام.</p>
+    <div class="field"><textarea name="tplEnd" rows="4">${esc(S.tplEnd)}</textarea></div>
     <button class="btn">حفظ الإعدادات</button>
+  </form>
+  <form id="waf" class="card">
+    <h3>ربط واتساب Business API</h3>
+    <div class="note small">
+      1) من <b>Meta Business Manager ← WhatsApp Manager ← Message templates</b> أنشئ قالبًا من نوع <b>Utility</b> باللغة العربية بنفس نص الرسالة أعلاه، وانتظر الموافقة.<br>
+      2) انسخ <b>Phone Number ID</b> و<b>Permanent Access Token</b> (من System User) واسم القالب هنا.<br>
+      3) اضغط «إرسال رسالة اختبار» على رقمك قبل التفعيل.
+    </div>
+    <div class="field"><label>طريقة الإرسال</label>
+      <div class="radio-row">
+        <label><input type="radio" name="waMode" value="manual" ${S.waMode !== 'api' ? 'checked' : ''}><span>يدوي (زر واتساب)</span></label>
+        <label><input type="radio" name="waMode" value="api" ${S.waMode === 'api' ? 'checked' : ''}><span>تلقائي (Business API)</span></label>
+      </div></div>
+    <div class="row">
+      <div class="field"><label>Phone Number ID</label><input name="waPhoneId" dir="ltr" value="${esc(S.waPhoneId)}"></div>
+      <div class="field"><label>Access Token</label><input name="waToken" type="password" dir="ltr" value="${esc(S.waToken)}" autocomplete="off"></div>
+    </div>
+    <div class="row3">
+      <div class="field"><label>اسم القالب (Template name)</label><input name="waTemplate" dir="ltr" placeholder="subscription_renewal" value="${esc(S.waTemplate)}"></div>
+      <div class="field"><label>لغة القالب</label><input name="waLang" dir="ltr" value="${esc(S.waLang || 'ar')}"></div>
+      <div class="field"><label>إصدار API</label><input name="waVersion" dir="ltr" value="${esc(S.waVersion || 'v21.0')}"></div>
+    </div>
+    <div class="field"><label>رابط خادم وسيط (اختياري — أكثر أمانًا)</label><input name="waProxy" dir="ltr" placeholder="https://..." value="${esc(S.waProxy)}">
+      <p class="muted small" style="margin:2px 0 0">لو موجود، يُرسل له الطلب بدل Meta مباشرة ويُترك التوكن على الخادم.</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <button class="btn">حفظ إعدادات واتساب</button>
+      <div class="field" style="margin:0;flex:1;min-width:180px"><label>رقم للاختبار</label><input id="waTestTo" dir="ltr" placeholder="2010xxxxxxxx"></div>
+      <button type="button" class="btn ghost" onclick="waTest()">إرسال رسالة اختبار</button>
+    </div>
+
   </form>
   <form id="pwf" class="card">
     <h3>بيانات دخول المدير</h3>
@@ -731,10 +759,19 @@ document.addEventListener('submit', async e => {
     const d = Object.fromEntries(new FormData(e.target));
     Object.assign(S, {
       academy: d.academy.trim() || 'Qraan', whatsapp: d.whatsapp.trim(), adminCountry: d.adminCountry,
-      defaultLectures: Math.max(1, +d.defaultLectures || 8), absentCounts: !!d.absentCounts, teacherCanSend: !!d.teacherCanSend,
-      tplSession: d.tplSession, tplExtra: d.tplExtra, tplRenew: d.tplRenew, tplSchedule: d.tplSchedule,
+      defaultLectures: Math.max(1, +d.defaultLectures || 8), absentCounts: !!d.absentCounts,
+      tplEnd: d.tplEnd.trim() || S.tplEnd,
     });
     Store.save(); toast('تم حفظ الإعدادات'); render();
+  }
+  if (e.target.id === 'waf') {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(e.target));
+    Object.assign(S, { waMode: d.waMode, waPhoneId: d.waPhoneId.trim(), waToken: d.waToken.trim(), waTemplate: d.waTemplate.trim(),
+      waLang: d.waLang.trim() || 'ar', waVersion: d.waVersion.trim() || 'v21.0', waProxy: d.waProxy.trim() });
+    if (S.waMode === 'api' && !S.waProxy && !(S.waPhoneId && S.waToken && S.waTemplate)) { S.waMode = 'manual'; toast('أكمل Phone Number ID والتوكن واسم القالب أولًا', true); }
+    else toast('تم حفظ إعدادات واتساب');
+    Store.save(); render();
   }
   if (e.target.id === 'pwf') {
     e.preventDefault();
@@ -746,6 +783,17 @@ document.addEventListener('submit', async e => {
   }
 });
 
+async function waTest() {
+  const to = normPhone($('#waTestTo').value, S.adminCountry);
+  if (!to) return toast('اكتب رقم الاختبار', true);
+  const f = $('#waf'), d = Object.fromEntries(new FormData(f));
+  const saved = { ...S };
+  Object.assign(S, { waPhoneId: d.waPhoneId.trim(), waToken: d.waToken.trim(), waTemplate: d.waTemplate.trim(), waLang: d.waLang.trim() || 'ar', waVersion: d.waVersion.trim() || 'v21.0', waProxy: d.waProxy.trim() });
+  toast('جارٍ الإرسال...');
+  try { await apiSend({ phone: to, text: S.tplEnd }); toast('تم إرسال رسالة الاختبار ✅ — راجع واتساب'); }
+  catch (e) { toast('فشل: ' + e.message, true); }
+  Object.assign(S, saved);
+}
 function exportData() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }));

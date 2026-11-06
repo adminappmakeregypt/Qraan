@@ -22,7 +22,15 @@ const defaultSettings = () => ({
   whatsapp: '', adminCountry: 'EG',
   defaultLectures: 8,
   absentCounts: true,            // هل الغياب يخصم محاضرة من الباقة؟
-  teacherCanSend: false,         // هل يرسل المحفظ الرسالة من هاتفه مباشرة؟
+  // ===== رسالة واتساب الوحيدة: عند انتهاء الباقة =====
+  tplEnd:
+`السلام عليكم
+نذكركم أن اليوم كانت آخر محاضرة تحفيظ قرآن.
+برجاء دفع قيمة الاشتراك الجديد.`,
+  waMode: 'manual',              // manual = زر واتساب يدوي | api = إرسال تلقائي عبر WhatsApp Business API
+  waPhoneId: '', waToken: '', waVersion: 'v21.0',
+  waTemplate: '', waLang: 'ar',  // اسم القالب المعتمد من Meta ولغته
+  waProxy: '',                   // (اختياري) رابط خادم وسيط يحمل التوكن بدل المتصفح
   tplSession:
 `السلام عليكم ورحمة الله وبركاته
 ولي أمر الطالب/ة: {student}
@@ -74,6 +82,10 @@ const Store = {
     if (!this.db) this.db = defaultDB();
     this.db.settings = { ...defaultSettings(), ...this.db.settings };
     ['teachers', 'students', 'reports', 'outbox'].forEach(k => { this.db[k] = this.db[k] || []; });
+    if (!this.db.settings.msgV2) {   // إلغاء كل الرسائل القديمة — الإبقاء على رسائل انتهاء الباقة فقط
+      this.db.outbox = this.db.outbox.filter(m => m.kind === 'renew' && m.status === 'sent');
+      this.db.settings.msgV2 = true; this.save();
+    }
     return this.db;
   },
   save() { localStorage.setItem(DB_KEY, JSON.stringify(this.db)); },
@@ -262,14 +274,12 @@ function recordSession(st, teacher, occ, attendance) {
   };
   Store.db.reports.push(rep);
 
-  const loc = localOf(occ.ts, st.country);   // ولي الأمر يرى الموعد بتوقيت بلده
-  const v = msgVars(st, { date: loc.iso, dayname: DAYS[loc.day], time: fmtTime(loc.time), attendance: ATT[attendance] });
-  const msgs = [queueMessage('report', st, fill(S.tplSession, v))];
-  if (st.remaining <= 0) {
+  const msgs = [];
+  if (st.remaining <= 0) {   // آخر محاضرة في الباقة → رسالة واحدة لولي الأمر
     st.status = 'expired'; st.expiredAt = Date.now();
-    msgs.push(queueMessage('renew', st, fill(S.tplRenew, v)));
+    msgs.push(queueMessage('renew', st, fill(S.tplEnd, msgVars(st))));
   }
-  rep.msgIds = msgs.map(m => m.id); rep.msgId = msgs[0].id;
+  rep.msgIds = msgs.map(m => m.id); rep.msgId = msgs[0]?.id || null;
   Store.save();
   return { rep, msgs };
 }
@@ -307,7 +317,6 @@ function editSession(repId, att) {
     r.remainingAfter = st.remaining;
   }
   const m = Store.db.outbox.find(x => x.id === r.msgId && x.status === 'pending');
-  if (m) m.text = m.text.replace(ATT[r.attendance], ATT[att]);
   r.attendance = att; r.counted = counted; r.editedAt = Date.now();
   Store.save();
 }
@@ -370,6 +379,37 @@ function queueSchedule(st) {
   return m;
 }
 
+/** إرسال رسالة عبر WhatsApp Business API (أو الخادم الوسيط) */
+async function apiSend(m) {
+  const S = Store.db.settings;
+  if (!m.phone) throw new Error('رقم ولي الأمر غير مسجل');
+  let res, body;
+  if (S.waProxy) {
+    res = await fetch(S.waProxy, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: m.phone, template: S.waTemplate, language: S.waLang, text: m.text }) });
+  } else {
+    if (!S.waPhoneId || !S.waToken || !S.waTemplate) throw new Error('إعدادات WhatsApp API غير مكتملة');
+    res = await fetch(`https://graph.facebook.com/${S.waVersion || 'v21.0'}/${S.waPhoneId}/messages`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.waToken },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to: m.phone, type: 'template', template: { name: S.waTemplate, language: { code: S.waLang || 'ar' } } }),
+    });
+  }
+  try { body = await res.json(); } catch { body = {}; }
+  if (!res.ok) throw new Error(body?.error?.message || ('HTTP ' + res.status));
+  return body;
+}
+/** تسليم الرسالة: تلقائي لو API مفعّل، وإلا تبقى في الانتظار للإرسال اليدوي */
+async function deliver(m) {
+  if (Store.db.settings.waMode !== 'api') return 'manual';
+  try {
+    const r = await apiSend(m);
+    m.status = 'sent'; m.sentAt = Date.now(); m.via = 'api'; m.waId = r?.messages?.[0]?.id || ''; delete m.error;
+    Store.save(); return 'sent';
+  } catch (e) {
+    m.status = 'pending'; m.error = e.message; m.lastTry = Date.now(); Store.save(); return 'failed';
+  }
+}
+
 function markSent(id) {
   const m = Store.db.outbox.find(x => x.id === id);
   if (m) { m.status = 'sent'; m.sentAt = Date.now(); Store.save(); }
@@ -382,7 +422,7 @@ function sendWhatsApp(id) {
   markSent(id);
 }
 
-const KIND = { report: ['تقرير', 'ok'], renew: ['تذكير اشتراك', 'danger'], schedule: ['مواعيد', 'gold'] };
+const KIND = { report: ['تقرير', 'ok'], renew: ['انتهاء الباقة', 'danger'], schedule: ['مواعيد', 'gold'], test: ['اختبار', 'gray'] };
 function kindPill(k) { const [l, c] = KIND[k] || [k, 'gray']; return `<span class="pill ${c}">${l}</span>`; }
 function statusPill(st) {
   if (st.status === 'expired' || st.remaining <= 0) return '<span class="pill danger">منتهي</span>';
