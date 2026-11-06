@@ -161,3 +161,31 @@ td .actions{display:flex;gap:4px;flex-wrap:wrap}
 .chip.gold{background:var(--gold-soft);color:#7a5a14}
 .chip button{border:0;background:transparent;cursor:pointer;color:inherit;font-size:15px;line-height:1;padding:0 4px;opacity:.6}
 .chip button:hover{opacity:1;color:var(--danger)}
+
+/* Split layout + teacher list */
+.split{display:grid;grid-template-columns:240px 1fr;gap:16px;align-items:start}
+.tlist{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:10px;position:sticky;top:12px}
+.tlist input{margin-bottom:8px}
+.tlist-items{max-height:68vh;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.tlist-items button{border:0;background:transparent;text-align:right;font:inherit;padding:8px 10px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;gap:6px;align-items:center}
+.tlist-items button span{font-size:12px;color:var(--muted);white-space:nowrap}
+.tlist-items button:hover{background:var(--soft)}
+.tlist-items button.active{background:var(--primary);color:#fff}
+.tlist-items button.active span{color:#d6ece1}
+@media(max-width:860px){.split{grid-template-columns:1fr}.tlist{position:static}.tlist-items{max-height:220px}}
+.slot-btn{display:block;width:calc(100% - 12px);text-align:right;font:inherit;border:0;cursor:pointer;border-right:3px solid var(--primary)}
+.slot-btn:hover{background:#d3eadd}
+.slot-btn.off{opacity:.5;border-right-color:var(--danger)}
+.add-slot{display:block;width:calc(100% - 12px);margin:6px;border:1px dashed #b7d3c4;background:transparent;color:var(--primary);border-radius:8px;padding:6px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.add-slot:hover{background:var(--soft)}
+.newst{background:#faf8f2;border:1px solid var(--line);border-radius:12px;padding:12px 12px 0;margin-bottom:12px}
+tr.sel td{background:var(--soft)}
+.att-sel{width:auto;padding:4px 8px;font-weight:700}
+.att-sel.ok{color:var(--ok);border-color:#bfe3cd}.att-sel.bad{color:var(--danger);border-color:#f0c9c4}
+.miss-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px dashed #e6d4a6;flex-wrap:wrap}
+.stat.clickable{cursor:pointer}.stat.clickable:hover{border-color:var(--gold)}
+
+.split .week{grid-template-columns:repeat(7,minmax(0,1fr))}
+.split .week .slot,.split .week .add-slot{font-size:12.5px}
+@media(max-width:1100px){.split .week{grid-template-columns:repeat(7,minmax(110px,1fr))}}
+.detail-card{border:2px solid var(--primary)}

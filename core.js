@@ -292,6 +292,26 @@ function undoSession(repId) {
   Store.save();
 }
 
+/** تعديل حضور محاضرة مسجلة (من المدير) */
+function editSession(repId, att) {
+  const S = Store.db.settings, r = Store.db.reports.find(x => x.id === repId);
+  if (!r || r.attendance === att) return;
+  const st = Store.student(r.studentId), counted = att === 'present' || S.absentCounts;
+  if (st) {
+    if (r.attendance === 'present') st.attended = Math.max(0, (st.attended || 0) - 1); else st.absent = Math.max(0, (st.absent || 0) - 1);
+    if (att === 'present') st.attended = (st.attended || 0) + 1; else st.absent = (st.absent || 0) + 1;
+    if (r.counted && !counted) st.remaining = Math.min(st.total, st.remaining + 1);
+    if (!r.counted && counted) st.remaining = Math.max(0, st.remaining - 1);
+    if (st.remaining <= 0) st.status = 'expired';
+    else if (st.status === 'expired' && r.wasStatus === 'paid') st.status = 'paid';
+    r.remainingAfter = st.remaining;
+  }
+  const m = Store.db.outbox.find(x => x.id === r.msgId && x.status === 'pending');
+  if (m) m.text = m.text.replace(ATT[r.attendance], ATT[att]);
+  r.attendance = att; r.counted = counted; r.editedAt = Date.now();
+  Store.save();
+}
+
 /** إحصائيات محاضرات محفظ */
 function teacherStats(teacherId, country) {
   const month = nowIn(country).iso.slice(0, 7);
@@ -325,7 +345,7 @@ function slotConflicts(teacherId, slot, slotCountry, dur, exceptStudentId) {
     slotsIn(st, t.country).forEach(x => {
       const a = slotMin(x), d2 = st.duration || 30;
       const overlap = [0, WEEK, -WEEK].some(k => m < a + k + d2 && a + k < m + dur);
-      if (overlap && !(st.id === exceptStudentId && a === m)) out.push(`${st.name} (${fmtSlot(x)})`);
+      if (overlap && st.id !== exceptStudentId) out.push(`${st.name} (${fmtSlot(x)})`);
     });
   });
   return out;

@@ -46,7 +46,7 @@ function dashboard() {
     <div class="stat"><div class="n">${active.length}</div><div class="l">طالب اشتراكه مدفوع</div></div>
     <div class="stat danger"><div class="n">${expired.length}</div><div class="l">اشتراك منتهي</div></div>
     <div class="stat warn"><div class="n">${low.length}</div><div class="l">قارب على الانتهاء (≤ 2)</div></div>
-    <div class="stat gold"><div class="n">${todayReports.length}</div><div class="l">محاضرات سُجلت اليوم</div></div>
+    <div class="stat gold clickable" onclick="go('reports')"><div class="n">${todayReports.length}</div><div class="l">محاضرات سُجلت اليوم ←</div></div>
     <div class="stat"><div class="n">${pending.length}</div><div class="l">رسائل في انتظار الإرسال</div></div>
   </div>
   <div class="row">
@@ -65,78 +65,158 @@ function dashboard() {
   </div>`;
 }
 
-/* =============== توزيع المحاضرات =============== */
-const asg = { teacher: '', tz: '' };
+/* =============== الجدول والحصص =============== */
+const asg = { teacher: '', tz: '', q: '' };
 const tzBaseOptions = (st, t) => [
   ['T', `توقيت المحفظ (${COUNTRIES[t.country].name})`], ['S', `توقيت الطالب (${COUNTRIES[st.country].name})`], ['A', `توقيتي (${COUNTRIES[S.adminCountry].name})`],
 ].map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
 const baseCountry = (k, st, t) => k === 'S' ? st.country : k === 'A' ? S.adminCountry : t.country;
 
+function teacherList(sel, onPick) {
+  const q = asg.q.trim().toLowerCase();
+  const list = db.teachers.filter(t => !q || (t.name + ' ' + t.username).toLowerCase().includes(q));
+  return `<aside class="tlist">
+    <input placeholder="🔍 ابحث عن محفظ (${db.teachers.length})" value="${esc(asg.q)}" oninput="asg.q=this.value;refreshTList()">
+    <div class="tlist-items" id="tlistItems">${list.map(t => {
+      const act = db.students.filter(s => s.teacherId === t.id && isActive(s)).length;
+      return `<button class="${t.id === sel ? 'active' : ''}" onclick="${onPick}('${t.id}')"><b>${esc(t.name)}</b><span>${COUNTRIES[t.country].flag} ${act} طالب</span></button>`;
+    }).join('') || '<div class="empty small">لا نتائج</div>'}</div></aside>`;
+}
+function refreshTList() {
+  const box = $('#tlistItems'); if (!box) return;
+  const tmp = document.createElement('div'); tmp.innerHTML = teacherList(asg.teacher, current === 'assign' ? 'pickAssign' : 'pickLec');
+  box.innerHTML = $('#tlistItems', tmp).innerHTML;
+}
+function pickAssign(id) { asg.teacher = id; asg.tz = ''; render(); }
+
 function assign() {
-  if (!db.teachers.length) return '<div class="topbar"><h2>توزيع المحاضرات</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
+  if (!db.teachers.length) return '<div class="topbar"><h2>الجدول والحصص</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
   if (!Store.teacher(asg.teacher)) asg.teacher = db.teachers[0].id;
   const t = Store.teacher(asg.teacher), view = asg.tz || t.country;
   const sts = db.students.filter(s => s.teacherId === t.id);
   const stt = teacherStats(t.id, S.adminCountry);
   const weekly = sts.filter(isActive).reduce((n, s) => n + (s.slots || []).length, 0);
   const now = Date.now();
-
   const days = DAYS.map(() => []);
-  sts.filter(isActive).forEach(st => slotsIn(st, view).forEach(x => days[x.day].push({ st, x })));
+  sts.forEach(st => (st.slots || []).forEach((s, i) => { const x = convertSlot(s, st.country, view); days[x.day].push({ st, x, i }); }));
   days.forEach(d => d.sort((a, b) => slotMin(a.x) - slotMin(b.x)));
   const nd = nowIn(view).day;
 
   return `
-  <div class="topbar"><h2>توزيع المحاضرات</h2></div>
-  <div class="tpicks">${db.teachers.map(x => {
-    const c = db.students.filter(s => s.teacherId === x.id && isActive(s)).length;
-    return `<button class="tpick ${x.id === t.id ? 'active' : ''}" onclick="asg.teacher='${x.id}';asg.tz='';render()"><b>${esc(x.name)}</b><span>${COUNTRIES[x.country].flag} · ${c} طالب نشط</span></button>`;
-  }).join('')}</div>
+  <div class="topbar"><h2>الجدول والحصص</h2><span class="muted small">اضغط + في أي يوم لإضافة حصة، أو اضغط على الحصة لتعديلها</span></div>
+  <div class="split">
+    ${teacherList(t.id, 'pickAssign')}
+    <div style="min-width:0">
+      <div class="card" style="padding:14px 18px">
+        <div class="topbar" style="margin:0"><div><h3 style="margin:0">${esc(t.name)}</h3><span class="muted small">${countryLabel(t.country)} · ${sts.filter(isActive).length} طالب نشط · ${weekly} حصة أسبوعيًا · ${stt.month} محاضرة هذا الشهر</span></div>
+          <select style="width:auto" onchange="asg.tz=this.value;render()">${Object.entries(COUNTRIES).map(([k, c]) => `<option value="${k}" ${k === view ? 'selected' : ''}>عرض بتوقيت ${c.name}</option>`).join('')}</select></div>
+      </div>
+      <div class="week">${days.map((list, i) => `<div class="day ${i === nd ? 'today' : ''}"><h4>${DAYS[i]}</h4>
+        ${list.map(({ st, x, i: idx }) => `<button class="slot slot-btn ${isActive(st) ? '' : 'off'}" onclick="sessionModal('${t.id}',${i},'${st.id}',${idx})" title="تعديل">
+          <b>${fmtTime(x.time)}</b>${esc(st.name)}<div class="muted small">${COUNTRIES[st.country].flag} ${st.duration || 30} د${isActive(st) ? '' : ' · منتهي'}</div></button>`).join('')}
+        <button class="add-slot" onclick="sessionModal('${t.id}',${i})">+ حصة</button>
+      </div>`).join('')}</div>
 
-  <div class="stats">
-    <div class="stat"><div class="n">${sts.filter(isActive).length}</div><div class="l">طلاب نشطين</div></div>
-    <div class="stat"><div class="n">${weekly}</div><div class="l">حلقة أسبوعيًا</div></div>
-    <div class="stat gold"><div class="n">${stt.month}</div><div class="l">محاضرات هذا الشهر</div></div>
-    <div class="stat"><div class="n">${stt.total}</div><div class="l">إجمالي المحاضرات</div></div>
-  </div>
-
-  <div class="card">
-    <div class="topbar" style="margin-bottom:10px"><h3 style="margin:0">طلاب ${esc(t.name)}</h3>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button class="btn sm" onclick="studentForm(null,'${t.id}')">+ طالب جديد</button>
-        <button class="btn sm ghost" onclick="moveStudentForm('${t.id}')">+ تعيين طالب حالي</button>
-      </div></div>
-    ${sts.length ? `<div class="table-wrap"><table>
-      <tr><th>الطالب</th><th>الباقة</th><th>المواعيد الأسبوعية <span class="muted small">(بتوقيت المحفظ)</span></th><th>محاضرات إضافية</th><th></th></tr>
-      ${sts.map(st => {
-        const ex = (st.extra || []).filter(e => e.ts > now - 86400000).sort((a, b) => a.ts - b.ts);
-        return `<tr>
-        <td><b>${esc(st.name)}</b><div class="muted small">${countryLabel(st.country)} · ${st.duration || 30} د</div></td>
-        <td>${meter(st)}<div style="margin-top:4px">${statusPill(st)}</div></td>
-        <td><div class="chips">${(st.slots || []).map((s, i) => { const x = convertSlot(s, st.country, t.country);
-          return `<span class="chip">${fmtSlot(x)}<button title="حذف" onclick="removeSlot('${st.id}',${i})">×</button></span>`; }).join('') || '<span class="muted small">لا يوجد</span>'}</div></td>
-        <td><div class="chips">${ex.map(e => { const l = localOf(e.ts, t.country);
-          return `<span class="chip gold">${DAYS[l.day]} ${l.iso.slice(5)} · ${fmtTime(l.time)}<button title="حذف" onclick="removeExtra('${st.id}','${e.id}')">×</button></span>`; }).join('') || '<span class="muted small">—</span>'}</div></td>
-        <td><div class="actions">
-          <button class="btn sm" onclick="addSlotForm('${st.id}')">+ موعد أسبوعي</button>
-          <button class="btn sm ghost" onclick="addExtraForm('${st.id}')">+ محاضرة إضافية</button>
-          <button class="btn sm gold" onclick="topUpForm('${st.id}')">+ محاضرات للباقة</button>
-          <button class="btn sm ghost" onclick="moveStudentForm('', '${st.id}')">نقل</button>
-        </div></td></tr>`;
-      }).join('')}
-    </table></div>` : '<div class="empty">لا يوجد طلاب لهذا المحفظ — أضف طالبًا جديدًا أو عيّن طالبًا حاليًا.</div>'}
-  </div>
-
-  <div class="card">
-    <div class="topbar" style="margin-bottom:10px"><h3 style="margin:0">الجدول الأسبوعي للمحفظ</h3>
-      <select style="width:auto" onchange="asg.tz=this.value;render()">${Object.entries(COUNTRIES).map(([k, c]) => `<option value="${k}" ${k === view ? 'selected' : ''}>بتوقيت ${c.name}</option>`).join('')}</select></div>
-    <div class="week">${days.map((list, i) => `<div class="day ${i === nd ? 'today' : ''}"><h4>${DAYS[i]}</h4>
-      ${list.map(({ st, x }) => `<div class="slot"><b>${fmtTime(x.time)}</b>${esc(st.name)}<div class="muted small">${COUNTRIES[st.country].flag} ${st.duration || 30} د</div></div>`).join('') || '<div class="empty small">—</div>'}
-    </div>`).join('')}</div>
+      <div class="card" style="margin-top:16px">
+        <div class="topbar" style="margin-bottom:10px"><h3 style="margin:0">طلاب ${esc(t.name)} (${sts.length})</h3>
+          <button class="btn sm ghost" onclick="moveStudentForm('${t.id}')">+ تعيين طالب حالي</button></div>
+        ${sts.length ? `<div class="table-wrap"><table>
+          <tr><th>الطالب</th><th>الباقة</th><th>محاضرات إضافية</th><th></th></tr>
+          ${sts.map(st => {
+            const ex = (st.extra || []).filter(e => e.ts > now - 86400000).sort((a, b) => a.ts - b.ts);
+            return `<tr>
+            <td><b>${esc(st.name)}</b><div class="muted small">${countryLabel(st.country)} · ${(st.slots || []).length} حصة/أسبوع</div></td>
+            <td>${meter(st)}<div style="margin-top:4px">${statusPill(st)}</div></td>
+            <td><div class="chips">${ex.map(e => { const l = localOf(e.ts, t.country);
+              return `<span class="chip gold">${DAYS[l.day]} ${l.iso.slice(5)} · ${fmtTime(l.time)}<button title="حذف" onclick="removeExtra('${st.id}','${e.id}')">×</button></span>`; }).join('') || '<span class="muted small">—</span>'}</div></td>
+            <td><div class="actions">
+              <button class="btn sm ghost" onclick="addExtraForm('${st.id}')">+ محاضرة مرة واحدة</button>
+              <button class="btn sm gold" onclick="topUpForm('${st.id}')">+ محاضرات للباقة</button>
+              <button class="btn sm ghost" onclick="studentForm('${st.id}')">تعديل</button>
+              <button class="btn sm ghost" onclick="moveStudentForm('', '${st.id}')">نقل</button>
+            </div></td></tr>`;
+          }).join('')}
+        </table></div>` : '<div class="empty">لا يوجد طلاب — اضغط «+ حصة» في الجدول لإضافة أول طالب.</div>'}
+      </div>
+    </div>
   </div>`;
 }
 
-function tzPreview(st, t, day, time, baseKey, isDate) {
+/** نافذة إضافة/تعديل حصة أسبوعية من الجدول */
+function sessionModal(teacherId, day, studentId, slotIdx) {
+  const t = Store.teacher(teacherId), editing = studentId != null && slotIdx != null;
+  const st0 = studentId ? Store.student(studentId) : null;
+  const mine = db.students.filter(s => s.teacherId === teacherId), others = db.students.filter(s => s.teacherId !== teacherId);
+  const cur = editing ? convertSlot(st0.slots[slotIdx], st0.country, t.country) : { day, time: '17:00' };
+  openModal(editing ? `تعديل حصة — ${esc(st0.name)}` : `حصة جديدة — ${esc(t.name)}`, `
+    <form id="smf">
+      <div class="field"><label>الطالب</label>
+        <select name="sid" ${editing ? 'disabled' : ''}>
+          ${mine.length ? `<optgroup label="طلاب المحفظ">${mine.map(s => `<option value="${s.id}" ${s.id === studentId ? 'selected' : ''}>${esc(s.name)} — متبقي ${s.remaining}</option>`).join('')}</optgroup>` : ''}
+          <option value="__new" ${!editing && !mine.length ? 'selected' : ''}>➕ طالب جديد</option>
+          ${others.length ? `<optgroup label="طلاب آخرين (سيتم نقلهم لهذا المحفظ)">${others.map(s => `<option value="${s.id}">${esc(s.name)} — ${s.teacherId ? teacherName(s.teacherId) : 'بدون محفظ'}</option>`).join('')}</optgroup>` : ''}
+        </select></div>
+      <div id="newSt" class="newst">
+        <div class="row"><div class="field"><label>اسم الطالب</label><input name="nname"></div>
+          <div class="field"><label>بلد الطالب</label><select name="ncountry">${countryOptions(t.country)}</select></div></div>
+        <div class="row"><div class="field"><label>واتساب ولي الأمر</label><input name="nphone" dir="ltr"></div>
+          <div class="field"><label>اسم ولي الأمر</label><input name="nparent"></div></div>
+        <div class="row"><div class="field"><label>عدد محاضرات الباقة</label><input name="ntotal" type="number" min="1" value="${S.defaultLectures}"></div>
+          <div class="field"><label>مدة الحصة (دقيقة)</label><input name="ndur" type="number" min="10" step="5" value="30"></div></div>
+      </div>
+      <div class="row3">
+        <div class="field"><label>اليوم</label><select name="day">${DAYS.map((d, i) => `<option value="${i}" ${i === cur.day ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
+        <div class="field"><label>الساعة</label><input type="time" name="time" value="${cur.time}" required></div>
+        <div class="field"><label>بأي توقيت؟</label><select name="base"></select></div>
+      </div>
+      <div id="smPrev"></div>
+      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إرسال المواعيد لولي الأمر</label></div>
+    </form>`,
+    `<button class="btn" form="smf">${editing ? 'حفظ التعديل' : 'إضافة الحصة'}</button>
+     ${editing ? `<button class="btn danger" type="button" id="smDel">حذف الحصة</button>` : ''}
+     <button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  const f = $('#smf');
+  const getSt = () => {
+    const v = editing ? studentId : f.sid.value;
+    if (v === '__new') return { id: null, country: f.ncountry.value, duration: +f.ndur.value || 30, name: f.nname.value };
+    return Store.student(v);
+  };
+  let lastBaseSt = '';
+  const upd = () => {
+    const st = getSt(), isNew = !st.id;
+    $('#newSt').classList.toggle('hidden', !isNew);
+    const sig = st.id + st.country;
+    if (sig !== lastBaseSt) { const keep = f.base.value || 'T'; f.base.innerHTML = tzBaseOptions(st, t); f.base.value = keep; lastBaseSt = sig; }
+    $('#smPrev').innerHTML = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false, editing ? studentId : null).html;
+  };
+  f.addEventListener('input', upd); f.addEventListener('change', upd); upd();
+  if (editing) $('#smDel').onclick = () => {
+    if (!confirmBox('حذف هذه الحصة الأسبوعية؟')) return;
+    st0.slots.splice(slotIdx, 1); Store.save(); closeModal(); toast('تم الحذف'); render();
+  };
+  f.onsubmit = e => {
+    e.preventDefault();
+    let st = getSt();
+    if (!st.id) {
+      if (!f.nname.value.trim() || !f.nphone.value.trim()) return toast('اكتب اسم الطالب ورقم ولي الأمر', true);
+      const n = Math.max(1, +f.ntotal.value || S.defaultLectures);
+      st = { id: uid(), createdAt: Date.now(), name: f.nname.value.trim(), parentName: f.nparent.value.trim(), parentPhone: f.nphone.value.trim(),
+        country: f.ncountry.value, teacherId: t.id, total: n, remaining: n, status: 'paid', attended: 0, absent: 0, excused: 0, renewals: [],
+        notes: '', link: '', duration: Math.max(10, +f.ndur.value || 30), slots: [] };
+      db.students.push(st);
+    } else if (st.teacherId !== t.id) st.teacherId = t.id;
+    const p = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false, null);
+    const ns = convertSlot(p.slot, p.bc, st.country);
+    if ((st.slots || []).some((s, i) => s.day === ns.day && s.time === ns.time && i !== slotIdx)) return toast('هذا الموعد موجود بالفعل', true);
+    if (editing) st.slots[slotIdx] = { day: ns.day, time: ns.time, since: Date.now() };
+    else (st.slots ||= []).push({ day: ns.day, time: ns.time, since: Date.now() });
+    Store.save();
+    if (f.send.checked && isActive(st)) queueSchedule(st);
+    closeModal(); toast(editing ? 'تم التعديل' : 'تمت إضافة الحصة'); render();
+  };
+}
+
+function tzPreview(st, t, day, time, baseKey, isDate, exceptSt = null) {
   const bc = baseCountry(baseKey, st, t);
   let ts, slot;
   if (isDate) { if (!day || !time) return { html: '' }; ts = occTs(day, time, bc); }
@@ -146,38 +226,9 @@ function tzPreview(st, t, day, time, baseKey, isDate) {
     .filter((x, i, a) => a.findIndex(y => y[0] === x[0]) === i)
     .map(([c, who]) => `<b>${who} (${COUNTRIES[c].flag} ${COUNTRIES[c].name}):</b> ${show(c)}`);
   const conf = isDate
-    ? slotConflicts(t.id, (() => { const l = localOf(ts, t.country); return { day: l.day, time: l.time }; })(), t.country, st.duration || 30, null)
-    : slotConflicts(t.id, slot, bc, st.duration || 30, null);
+    ? slotConflicts(t.id, (() => { const l = localOf(ts, t.country); return { day: l.day, time: l.time }; })(), t.country, st.duration || 30, exceptSt)
+    : slotConflicts(t.id, slot, bc, st.duration || 30, exceptSt);
   return { ts, slot, bc, html: `<div class="note small">${rows.join('<br>')}</div>${conf.length ? `<div class="note small" style="background:var(--danger-soft);border-color:#f0c9c4">⚠️ تعارض مع: ${conf.map(esc).join('، ')}</div>` : ''}` };
-}
-
-function addSlotForm(id) {
-  const st = Store.student(id), t = Store.teacher(st.teacherId);
-  if (!t) return toast('عيّن محفظًا للطالب أولًا', true);
-  openModal(`موعد أسبوعي جديد — ${esc(st.name)}`, `
-    <form id="asf">
-      <div class="row3">
-        <div class="field"><label>اليوم</label><select name="day">${DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}</select></div>
-        <div class="field"><label>الساعة</label><input type="time" name="time" value="17:00" required></div>
-        <div class="field"><label>بأي توقيت؟</label><select name="base">${tzBaseOptions(st, t)}</select></div>
-      </div>
-      <div id="asfPrev"></div>
-      ${isActive(st) ? '' : '<div class="note small">⚠️ اشتراك الطالب منتهي — الموعد لن يظهر للمحفظ حتى التجديد.</div>'}
-      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إرسال المواعيد الجديدة لولي الأمر</label></div>
-    </form>`,
-    `<button class="btn" form="asf">إضافة الموعد</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
-  const f = $('#asf'), upd = () => { $('#asfPrev').innerHTML = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false).html; };
-  f.addEventListener('input', upd); f.addEventListener('change', upd); upd();
-  f.onsubmit = e => {
-    e.preventDefault();
-    const p = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false);
-    const ns = convertSlot(p.slot, p.bc, st.country);
-    if ((st.slots || []).some(s => s.day === ns.day && s.time === ns.time)) return toast('هذا الموعد موجود بالفعل', true);
-    (st.slots ||= []).push({ day: ns.day, time: ns.time, since: Date.now() });
-    Store.save();
-    if (f.send.checked && isActive(st)) queueSchedule(st);
-    closeModal(); toast('تمت إضافة الموعد'); render();
-  };
 }
 
 function addExtraForm(id) {
@@ -277,7 +328,7 @@ function teachers() {
         <button class="btn sm ghost" onclick="teacherForm('${t.id}')">تعديل</button>
         <button class="btn sm ghost" onclick="filters.teacher='${t.id}';go('students')">طلابه</button>
         <button class="btn sm ghost" onclick="lec.teacher='${t.id}';go('reports')">محاضراته</button>
-        <button class="btn sm" onclick="asg.teacher='${t.id}';go('assign')">توزيع</button>
+        <button class="btn sm" onclick="asg.teacher='${t.id}';go('assign')">الجدول</button>
         <button class="btn sm danger" onclick="delTeacher('${t.id}')">حذف</button></div></td></tr>`;
     }).join('')}
   </table></div>` : '<div class="card empty">لا يوجد محفظين بعد — ابدأ بإضافة أول محفظ.</div>'}`;
@@ -502,60 +553,104 @@ function schedule() {
   </div>`).join('')}</div>`;
 }
 
-/* =============== سجل المحاضرات =============== */
-const lec = { teacher: '', month: '', student: '' };
+/* =============== محاضرات المحفظين =============== */
+const lec = { teacher: '', month: '', student: '', q: '', sort: 'done' };
 const attPill = r => r.attendance === 'present' ? '<span class="pill ok">حضر</span>' : '<span class="pill danger">لم يحضر</span>';
+let _missed = [];
+function pickLec(id) { lec.teacher = id; lec.student = ''; render(); setTimeout(() => $('#lecDetail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); }
+
 function reports() {
-  const C = S.adminCountry;
-  const all = db.reports.map(r => ({ r, w: repWhen(r, C) })).sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt));
-  const months = [...new Set(all.map(x => x.w.iso.slice(0, 7)))].sort().reverse();
-  const inMonth = all.filter(x => !lec.month || x.w.iso.startsWith(lec.month));
-  const list = inMonth.filter(x => (!lec.teacher || x.r.teacherId === lec.teacher) && (!lec.student || x.r.studentId === lec.student));
+  const C = S.adminCountry, nowM = nowIn(C).iso.slice(0, 7);
+  if (!lec.month) lec.month = nowM;
+  const all = db.reports.map(r => ({ r, w: repWhen(r, C) }));
+  const months = [...new Set([nowM, ...all.map(x => x.w.iso.slice(0, 7))])].sort().reverse();
+  const inMonth = lec.month === 'all' ? all : all.filter(x => x.w.iso.startsWith(lec.month));
+  const now = Date.now();
 
-  // ملخص لكل محفظ (حسب الشهر المختار)
-  const sum = db.teachers.map(t => {
+  // ملخص كل المحفظين
+  const q = lec.q.trim().toLowerCase();
+  let sum = db.teachers.filter(t => !q || t.name.toLowerCase().includes(q)).map(t => {
     const rs = inMonth.filter(x => x.r.teacherId === t.id);
-    return { t, n: rs.length, p: rs.filter(x => x.r.attendance === 'present').length, students: new Set(rs.map(x => x.r.studentId)).size,
-      last: rs[0] ? rs[0].w : null };
+    const p = rs.filter(x => x.r.attendance === 'present').length;
+    const missed = lec.month === nowM ? teacherSessions(t.id, C, 31, 0).filter(o => !o.rec && o.ts < now && o.date.startsWith(nowM)).length : 0;
+    const last = rs.sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt))[0];
+    return { t, n: rs.length, p, a: rs.length - p, missed, students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
+      active: db.students.filter(s => s.teacherId === t.id && isActive(s)).length };
   });
-  const studentsOf = db.students.filter(s => !lec.teacher || s.teacherId === lec.teacher);
+  const sorters = { done: (a, b) => b.n - a.n, name: (a, b) => a.t.name.localeCompare(b.t.name, 'ar'), missed: (a, b) => b.missed - a.missed };
+  sum.sort(sorters[lec.sort]);
+  const tot = sum.reduce((o, x) => ({ n: o.n + x.n, p: o.p + x.p, a: o.a + x.a, m: o.m + x.missed }), { n: 0, p: 0, a: 0, m: 0 });
 
+  const T = Store.teacher(lec.teacher);
   return `
-  <div class="topbar"><h2>سجل المحاضرات</h2><button class="btn ghost sm" onclick="exportLectures()">⬇️ تصدير Excel (CSV)</button></div>
+  <div class="topbar"><h2>محاضرات المحفظين</h2><button class="btn ghost sm" onclick="exportLectures()">⬇️ تصدير Excel</button></div>
   <div class="toolbar">
-    <select onchange="lec.month=this.value;render()"><option value="">كل الشهور</option>${months.map(m => `<option value="${m}" ${m === lec.month ? 'selected' : ''}>${m}</option>`).join('')}</select>
-    <select onchange="lec.teacher=this.value;lec.student='';render()"><option value="">كل المحفظين</option>${teacherOptions(lec.teacher, false)}</select>
-    <select onchange="lec.student=this.value;render()"><option value="">كل الطلاب</option>${studentsOf.map(s => `<option value="${s.id}" ${s.id === lec.student ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+    <select onchange="lec.month=this.value;render()">${months.map(m => `<option value="${m}" ${m === lec.month ? 'selected' : ''}>${m === nowM ? 'الشهر الحالي — ' : ''}${m}</option>`).join('')}<option value="all" ${lec.month === 'all' ? 'selected' : ''}>كل الفترات</option></select>
+    <input placeholder="🔍 بحث باسم المحفظ" value="${esc(lec.q)}" oninput="lec.q=this.value;debounceLec()">
+    <select onchange="lec.sort=this.value;render()">
+      <option value="done" ${lec.sort === 'done' ? 'selected' : ''}>ترتيب: الأكثر محاضرات</option>
+      <option value="missed" ${lec.sort === 'missed' ? 'selected' : ''}>ترتيب: الأكثر محاضرات لم تُسجل</option>
+      <option value="name" ${lec.sort === 'name' ? 'selected' : ''}>ترتيب: الاسم</option></select>
   </div>
-  <div class="card"><h3>ملخص المحفظين ${lec.month ? `— ${lec.month}` : '— كل الفترات'}</h3>
-    ${sum.length ? `<div class="table-wrap"><table><tr><th>المحفظ</th><th>عدد المحاضرات</th><th>حضر</th><th>لم يحضر</th><th>عدد الطلاب</th><th>آخر محاضرة</th><th></th></tr>
-      ${sum.map(x => `<tr><td><b>${esc(x.t.name)}</b></td><td><b>${x.n}</b></td><td>${x.p}</td><td>${x.n - x.p}</td><td>${x.students}</td>
-        <td>${x.last ? `${fmtDayDate(x.last.iso)} ${x.last.time ? fmtTime(x.last.time) : ''}` : '—'}</td>
-        <td><button class="btn sm ghost" onclick="lec.teacher='${x.t.id}';lec.student='';render()">التفاصيل</button></td></tr>`).join('')}
-    </table></div>` : '<div class="empty">لا يوجد محفظين</div>'}
+  <div class="stats">
+    <div class="stat"><div class="n">${tot.n}</div><div class="l">محاضرات مسجلة</div></div>
+    <div class="stat"><div class="n">${tot.p}</div><div class="l">حضر</div></div>
+    <div class="stat danger"><div class="n">${tot.a}</div><div class="l">لم يحضر</div></div>
+    <div class="stat warn"><div class="n">${tot.m}</div><div class="l">مجدولة ولم تُسجل بعد</div></div>
   </div>
-  <div class="card"><h3>المحاضرات (${list.length}) <span class="muted small">— بتوقيت ${countryLabel(C)}</span></h3>
-  ${list.length ? `<div class="table-wrap"><table>
-    <tr><th>اليوم والتاريخ</th><th>الوقت</th><th>المحفظ</th><th>الطالب</th><th>الحضور</th><th>رقم المحاضرة</th><th>المتبقي</th><th>سُجلت في</th><th>واتساب</th><th></th></tr>
-    ${list.slice(0, 500).map(({ r, w }) => {
-      const st = Store.student(r.studentId), m = db.outbox.find(x => x.id === r.msgId);
-      return `<tr><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td><td>${teacherName(r.teacherId)}</td><td>${esc(st?.name || '—')}</td>
-      <td>${attPill(r)}${r.counted === false ? '<div class="muted small">لم تُخصم</div>' : ''}</td><td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td>
-      <td class="small muted">${fmtDateTime(r.createdAt)}</td>
-      <td>${m ? (m.status === 'sent' ? '<span class="pill ok">أُرسلت</span>' : `<button class="btn sm wa" onclick="sendWhatsApp('${m.id}');render()">إرسال</button>`) : '—'}</td>
-      <td><button class="btn sm danger" onclick="adminUndo('${r.id}')">إلغاء</button></td></tr>`;
-    }).join('')}
-  </table></div>` : '<div class="empty">لا توجد محاضرات مسجلة.</div>'}</div>`;
+  ${T ? lecDetail(T, inMonth, nowM) : '<p class="muted small">اضغط «التفاصيل» أمام أي محفظ لعرض محاضراته وتعديلها.</p>'}
+  <div class="table-wrap"><table>
+    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>آخر محاضرة</th><th></th></tr>
+    ${sum.map(x => `<tr class="${x.t.id === lec.teacher ? 'sel' : ''}"><td><b>${esc(x.t.name)}</b><div class="muted small">${countryLabel(x.t.country)}</div></td><td>${x.active}</td>
+      <td><b style="font-size:17px">${x.n}</b></td><td>${x.p}</td><td>${x.a}</td>
+      <td>${x.missed ? `<span class="pill warn">${x.missed}</span>` : '—'}</td>
+      <td class="small">${x.last ? `${fmtDayDate(x.last.iso)}${x.last.time ? ' ' + fmtTime(x.last.time) : ''}` : '—'}</td>
+      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">لا نتائج</td></tr>'}
+  </table></div>
+`;
+}
+let _lt; function debounceLec() { clearTimeout(_lt); _lt = setTimeout(() => { const pos = document.activeElement?.selectionStart; render(); const i = $('.toolbar input'); i.focus(); i.setSelectionRange(pos, pos); }, 250); }
+
+function lecDetail(T, inMonth, nowM) {
+  const C = S.adminCountry, now = Date.now();
+  const rows = inMonth.filter(x => x.r.teacherId === T.id && (!lec.student || x.r.studentId === lec.student))
+    .sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt));
+  _missed = teacherSessions(T.id, C, 14, 0).filter(o => !o.rec && o.ts < now && (!lec.student || o.st.id === lec.student));
+  const sts = db.students.filter(s => s.teacherId === T.id || inMonth.some(x => x.r.teacherId === T.id && x.r.studentId === s.id));
+  return `
+  <div class="card detail-card" id="lecDetail">
+    <div class="topbar" style="margin-bottom:10px"><h3 style="margin:0">محاضرات ${esc(T.name)} <span class="muted small">— ${lec.month === 'all' ? 'كل الفترات' : lec.month} · بتوقيت ${countryLabel(C)}</span></h3>
+      <div style="display:flex;gap:6px"><select style="width:auto" onchange="lec.student=this.value;render()"><option value="">كل الطلاب</option>${sts.map(s => `<option value="${s.id}" ${s.id === lec.student ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+      <button class="btn sm ghost" onclick="lec.teacher='';render()">إغلاق</button></div></div>
+    ${_missed.length ? `<div class="note"><b>⚠️ محاضرات مجدولة لم يسجلها المحفظ (آخر 14 يوم):</b>
+      ${_missed.map((o, i) => `<div class="miss-row"><span>${fmtDayDate(o.date)} · ${fmtTime(o.time)} — <b>${esc(o.st.name)}</b></span>
+        <span><button class="btn sm" onclick="adminRecord(${i},'present')">✅ حضر</button> <button class="btn sm danger" onclick="adminRecord(${i},'absent')">❌ لم يحضر</button></span></div>`).join('')}</div>` : ''}
+    ${rows.length ? `<div class="table-wrap"><table>
+      <tr><th>اليوم والتاريخ</th><th>الوقت</th><th>الطالب</th><th>الحضور (قابل للتعديل)</th><th>رقم المحاضرة</th><th>المتبقي</th><th>سُجلت</th><th></th></tr>
+      ${rows.map(({ r, w }) => `<tr><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td><td>${esc(Store.student(r.studentId)?.name || '—')}</td>
+        <td><select class="att-sel ${r.attendance === 'present' ? 'ok' : 'bad'}" onchange="adminEdit('${r.id}',this.value)">
+          <option value="present" ${r.attendance === 'present' ? 'selected' : ''}>✅ حضر</option><option value="absent" ${r.attendance !== 'present' ? 'selected' : ''}>❌ لم يحضر</option></select>
+          ${r.editedAt ? '<div class="muted small">عُدلت من المدير</div>' : r.byAdmin ? '<div class="muted small">سجلها المدير</div>' : ''}</td>
+        <td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td><td class="small muted">${fmtDateTime(r.createdAt)}</td>
+        <td><button class="btn sm danger" onclick="adminUndo('${r.id}')">حذف</button></td></tr>`).join('')}
+    </table></div>` : '<div class="empty">لا توجد محاضرات مسجلة في هذه الفترة.</div>'}
+  </div>`;
+}
+function adminEdit(id, att) { editSession(id, att); toast('تم تعديل الحضور'); render(); }
+function adminRecord(i, att) {
+  const o = _missed[i]; if (!o) return;
+  try { const { rep } = recordSession(o.st, Store.teacher(o.st.teacherId), o, att); rep.byAdmin = true; Store.save(); toast('تم التسجيل'); render(); }
+  catch (e) { toast(e.message, true); }
 }
 function adminUndo(id) {
-  if (!confirmBox('إلغاء تسجيل المحاضرة وإرجاعها لرصيد الطالب؟')) return;
-  undoSession(id); toast('تم الإلغاء'); render();
+  if (!confirmBox('حذف تسجيل المحاضرة وإرجاعها لرصيد الطالب؟')) return;
+  undoSession(id); toast('تم الحذف'); render();
 }
 function exportLectures() {
   const C = S.adminCountry;
   const rows = [['التاريخ', 'الوقت', 'المحفظ', 'الطالب', 'الحضور', 'رقم المحاضرة', 'المتبقي']];
   db.reports.filter(r => (!lec.teacher || r.teacherId === lec.teacher) && (!lec.student || r.studentId === lec.student))
-    .map(r => ({ r, w: repWhen(r, C) })).filter(x => !lec.month || x.w.iso.startsWith(lec.month))
+    .map(r => ({ r, w: repWhen(r, C) })).filter(x => !lec.month || lec.month === 'all' || x.w.iso.startsWith(lec.month))
     .sort((a, b) => (a.r.sessionTs || a.r.createdAt) - (b.r.sessionTs || b.r.createdAt))
     .forEach(({ r, w }) => rows.push([w.iso, w.time, Store.teacher(r.teacherId)?.name || '', Store.student(r.studentId)?.name || '', ATT[r.attendance], r.lectureNo || '', r.remainingAfter]));
   const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
