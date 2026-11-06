@@ -7,7 +7,7 @@ const S = db.settings;
 let current = 'dashboard';
 const filters = { teacher: '', status: '', country: '', q: '' };
 
-const views = { dashboard, teachers, students, schedule, reports, outbox, settings };
+const views = { dashboard, assign, teachers, students, schedule, reports, outbox, settings };
 
 function go(tab) {
   current = tab;
@@ -65,6 +65,201 @@ function dashboard() {
   </div>`;
 }
 
+/* =============== توزيع المحاضرات =============== */
+const asg = { teacher: '', tz: '' };
+const tzBaseOptions = (st, t) => [
+  ['T', `توقيت المحفظ (${COUNTRIES[t.country].name})`], ['S', `توقيت الطالب (${COUNTRIES[st.country].name})`], ['A', `توقيتي (${COUNTRIES[S.adminCountry].name})`],
+].map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+const baseCountry = (k, st, t) => k === 'S' ? st.country : k === 'A' ? S.adminCountry : t.country;
+
+function assign() {
+  if (!db.teachers.length) return '<div class="topbar"><h2>توزيع المحاضرات</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
+  if (!Store.teacher(asg.teacher)) asg.teacher = db.teachers[0].id;
+  const t = Store.teacher(asg.teacher), view = asg.tz || t.country;
+  const sts = db.students.filter(s => s.teacherId === t.id);
+  const stt = teacherStats(t.id, S.adminCountry);
+  const weekly = sts.filter(isActive).reduce((n, s) => n + (s.slots || []).length, 0);
+  const now = Date.now();
+
+  const days = DAYS.map(() => []);
+  sts.filter(isActive).forEach(st => slotsIn(st, view).forEach(x => days[x.day].push({ st, x })));
+  days.forEach(d => d.sort((a, b) => slotMin(a.x) - slotMin(b.x)));
+  const nd = nowIn(view).day;
+
+  return `
+  <div class="topbar"><h2>توزيع المحاضرات</h2></div>
+  <div class="tpicks">${db.teachers.map(x => {
+    const c = db.students.filter(s => s.teacherId === x.id && isActive(s)).length;
+    return `<button class="tpick ${x.id === t.id ? 'active' : ''}" onclick="asg.teacher='${x.id}';asg.tz='';render()"><b>${esc(x.name)}</b><span>${COUNTRIES[x.country].flag} · ${c} طالب نشط</span></button>`;
+  }).join('')}</div>
+
+  <div class="stats">
+    <div class="stat"><div class="n">${sts.filter(isActive).length}</div><div class="l">طلاب نشطين</div></div>
+    <div class="stat"><div class="n">${weekly}</div><div class="l">حلقة أسبوعيًا</div></div>
+    <div class="stat gold"><div class="n">${stt.month}</div><div class="l">محاضرات هذا الشهر</div></div>
+    <div class="stat"><div class="n">${stt.total}</div><div class="l">إجمالي المحاضرات</div></div>
+  </div>
+
+  <div class="card">
+    <div class="topbar" style="margin-bottom:10px"><h3 style="margin:0">طلاب ${esc(t.name)}</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn sm" onclick="studentForm(null,'${t.id}')">+ طالب جديد</button>
+        <button class="btn sm ghost" onclick="moveStudentForm('${t.id}')">+ تعيين طالب حالي</button>
+      </div></div>
+    ${sts.length ? `<div class="table-wrap"><table>
+      <tr><th>الطالب</th><th>الباقة</th><th>المواعيد الأسبوعية <span class="muted small">(بتوقيت المحفظ)</span></th><th>محاضرات إضافية</th><th></th></tr>
+      ${sts.map(st => {
+        const ex = (st.extra || []).filter(e => e.ts > now - 86400000).sort((a, b) => a.ts - b.ts);
+        return `<tr>
+        <td><b>${esc(st.name)}</b><div class="muted small">${countryLabel(st.country)} · ${st.duration || 30} د</div></td>
+        <td>${meter(st)}<div style="margin-top:4px">${statusPill(st)}</div></td>
+        <td><div class="chips">${(st.slots || []).map((s, i) => { const x = convertSlot(s, st.country, t.country);
+          return `<span class="chip">${fmtSlot(x)}<button title="حذف" onclick="removeSlot('${st.id}',${i})">×</button></span>`; }).join('') || '<span class="muted small">لا يوجد</span>'}</div></td>
+        <td><div class="chips">${ex.map(e => { const l = localOf(e.ts, t.country);
+          return `<span class="chip gold">${DAYS[l.day]} ${l.iso.slice(5)} · ${fmtTime(l.time)}<button title="حذف" onclick="removeExtra('${st.id}','${e.id}')">×</button></span>`; }).join('') || '<span class="muted small">—</span>'}</div></td>
+        <td><div class="actions">
+          <button class="btn sm" onclick="addSlotForm('${st.id}')">+ موعد أسبوعي</button>
+          <button class="btn sm ghost" onclick="addExtraForm('${st.id}')">+ محاضرة إضافية</button>
+          <button class="btn sm gold" onclick="topUpForm('${st.id}')">+ محاضرات للباقة</button>
+          <button class="btn sm ghost" onclick="moveStudentForm('', '${st.id}')">نقل</button>
+        </div></td></tr>`;
+      }).join('')}
+    </table></div>` : '<div class="empty">لا يوجد طلاب لهذا المحفظ — أضف طالبًا جديدًا أو عيّن طالبًا حاليًا.</div>'}
+  </div>
+
+  <div class="card">
+    <div class="topbar" style="margin-bottom:10px"><h3 style="margin:0">الجدول الأسبوعي للمحفظ</h3>
+      <select style="width:auto" onchange="asg.tz=this.value;render()">${Object.entries(COUNTRIES).map(([k, c]) => `<option value="${k}" ${k === view ? 'selected' : ''}>بتوقيت ${c.name}</option>`).join('')}</select></div>
+    <div class="week">${days.map((list, i) => `<div class="day ${i === nd ? 'today' : ''}"><h4>${DAYS[i]}</h4>
+      ${list.map(({ st, x }) => `<div class="slot"><b>${fmtTime(x.time)}</b>${esc(st.name)}<div class="muted small">${COUNTRIES[st.country].flag} ${st.duration || 30} د</div></div>`).join('') || '<div class="empty small">—</div>'}
+    </div>`).join('')}</div>
+  </div>`;
+}
+
+function tzPreview(st, t, day, time, baseKey, isDate) {
+  const bc = baseCountry(baseKey, st, t);
+  let ts, slot;
+  if (isDate) { if (!day || !time) return { html: '' }; ts = occTs(day, time, bc); }
+  else { if (!time) return { html: '' }; slot = { day: +day, time }; }
+  const show = c => isDate ? (() => { const l = localOf(ts, c); return `${DAYS[l.day]} ${l.iso} ${fmtTime(l.time)}`; })() : fmtSlot(convertSlot(slot, bc, c));
+  const rows = [[t.country, 'المحفظ'], [st.country, 'الطالب'], [S.adminCountry, 'أنت']]
+    .filter((x, i, a) => a.findIndex(y => y[0] === x[0]) === i)
+    .map(([c, who]) => `<b>${who} (${COUNTRIES[c].flag} ${COUNTRIES[c].name}):</b> ${show(c)}`);
+  const conf = isDate
+    ? slotConflicts(t.id, (() => { const l = localOf(ts, t.country); return { day: l.day, time: l.time }; })(), t.country, st.duration || 30, null)
+    : slotConflicts(t.id, slot, bc, st.duration || 30, null);
+  return { ts, slot, bc, html: `<div class="note small">${rows.join('<br>')}</div>${conf.length ? `<div class="note small" style="background:var(--danger-soft);border-color:#f0c9c4">⚠️ تعارض مع: ${conf.map(esc).join('، ')}</div>` : ''}` };
+}
+
+function addSlotForm(id) {
+  const st = Store.student(id), t = Store.teacher(st.teacherId);
+  if (!t) return toast('عيّن محفظًا للطالب أولًا', true);
+  openModal(`موعد أسبوعي جديد — ${esc(st.name)}`, `
+    <form id="asf">
+      <div class="row3">
+        <div class="field"><label>اليوم</label><select name="day">${DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join('')}</select></div>
+        <div class="field"><label>الساعة</label><input type="time" name="time" value="17:00" required></div>
+        <div class="field"><label>بأي توقيت؟</label><select name="base">${tzBaseOptions(st, t)}</select></div>
+      </div>
+      <div id="asfPrev"></div>
+      ${isActive(st) ? '' : '<div class="note small">⚠️ اشتراك الطالب منتهي — الموعد لن يظهر للمحفظ حتى التجديد.</div>'}
+      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إرسال المواعيد الجديدة لولي الأمر</label></div>
+    </form>`,
+    `<button class="btn" form="asf">إضافة الموعد</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  const f = $('#asf'), upd = () => { $('#asfPrev').innerHTML = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false).html; };
+  f.addEventListener('input', upd); f.addEventListener('change', upd); upd();
+  f.onsubmit = e => {
+    e.preventDefault();
+    const p = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false);
+    const ns = convertSlot(p.slot, p.bc, st.country);
+    if ((st.slots || []).some(s => s.day === ns.day && s.time === ns.time)) return toast('هذا الموعد موجود بالفعل', true);
+    (st.slots ||= []).push({ day: ns.day, time: ns.time, since: Date.now() });
+    Store.save();
+    if (f.send.checked && isActive(st)) queueSchedule(st);
+    closeModal(); toast('تمت إضافة الموعد'); render();
+  };
+}
+
+function addExtraForm(id) {
+  const st = Store.student(id), t = Store.teacher(st.teacherId);
+  if (!t) return toast('عيّن محفظًا للطالب أولًا', true);
+  const today = nowIn(t.country).iso;
+  openModal(`محاضرة إضافية (مرة واحدة) — ${esc(st.name)}`, `
+    <form id="aef">
+      <div class="row3">
+        <div class="field"><label>التاريخ</label><input type="date" name="date" min="${addDaysIso(today, -7)}" value="${today}" required></div>
+        <div class="field"><label>الساعة</label><input type="time" name="time" value="17:00" required></div>
+        <div class="field"><label>بأي توقيت؟</label><select name="base">${tzBaseOptions(st, t)}</select></div>
+      </div>
+      <div id="aefPrev"></div>
+      <div class="field"><label><input type="checkbox" name="addOne" style="width:auto" ${st.remaining <= 0 ? 'checked' : ''}> إضافة محاضرة لرصيد الباقة أيضًا (محاضرة مدفوعة زيادة)</label>
+        <p class="muted small" style="margin:2px 0 0">لو غير مُفعّل، المحاضرة تُخصم من الرصيد الحالي (${st.remaining} متبقية) — مثل محاضرة تعويضية.</p></div>
+      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إبلاغ ولي الأمر</label></div>
+    </form>`,
+    `<button class="btn" form="aef">إضافة المحاضرة</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  const f = $('#aef'), upd = () => { $('#aefPrev').innerHTML = tzPreview(st, t, f.date.value, f.time.value, f.base.value, true).html; };
+  f.addEventListener('input', upd); f.addEventListener('change', upd); upd();
+  f.onsubmit = e => {
+    e.preventDefault();
+    const p = tzPreview(st, t, f.date.value, f.time.value, f.base.value, true);
+    if ((st.extra || []).some(x => x.ts === p.ts)) return toast('هذه المحاضرة موجودة بالفعل', true);
+    if (f.addOne.checked) topUpStudent(st, 1);
+    if (!isActive(st)) return toast('رصيد الطالب صفر — فعّل «إضافة محاضرة لرصيد الباقة» أو جدد الاشتراك', true);
+    (st.extra ||= []).push({ id: uid(), ts: p.ts, createdAt: Date.now() });
+    Store.save();
+    if (f.send.checked) {
+      const l = localOf(p.ts, st.country);
+      queueMessage('schedule', st, fill(S.tplExtra, msgVars(st, { dayname: DAYS[l.day], date: l.iso, time: fmtTime(l.time) })));
+      Store.save();
+    }
+    closeModal(); toast('تمت إضافة المحاضرة'); render();
+  };
+}
+
+function topUpForm(id) {
+  const st = Store.student(id);
+  openModal(`إضافة محاضرات للباقة — ${esc(st.name)}`, `
+    <form id="tuf">
+      <p class="muted">الرصيد الحالي: <b>${st.remaining}</b> من ${st.total} — ${statusPill(st)}</p>
+      <div class="field"><label>عدد المحاضرات المضافة</label><input name="n" type="number" min="1" value="4" required></div>
+      <p class="muted small">تُضاف للرصيد الحالي بدون تصفيره. (لبدء باقة جديدة استخدم «تجديد» من صفحة الطلاب)</p>
+    </form>`,
+    `<button class="btn gold" form="tuf">إضافة</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $('#tuf').onsubmit = e => { e.preventDefault(); topUpStudent(st, e.target.n.value); closeModal(); toast('تمت الإضافة'); render(); };
+}
+
+function moveStudentForm(toTeacher, studentId) {
+  const st = studentId ? Store.student(studentId) : null;
+  const candidates = db.students.filter(s => s.teacherId !== toTeacher);
+  openModal(st ? `نقل ${esc(st.name)} لمحفظ آخر` : 'تعيين طالب حالي لهذا المحفظ', `
+    <form id="mvf">
+      ${st ? '' : `<div class="field"><label>الطالب</label><select name="sid" required><option value="">— اختر —</option>
+        ${candidates.map(s => `<option value="${s.id}">${esc(s.name)} — ${s.teacherId ? 'حاليًا مع ' + teacherName(s.teacherId) : 'بدون محفظ'}</option>`).join('')}</select></div>`}
+      <div class="field"><label>المحفظ الجديد</label><select name="tid" required>${db.teachers.filter(x => !st || x.id !== st.teacherId).map(x => `<option value="${x.id}" ${x.id === toTeacher ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <p class="muted small">المحاضرات المسجلة سابقًا تبقى في سجل المحفظ القديم. المواعيد تنتقل كما هي.</p>
+      <div class="field"><label><input type="checkbox" name="send" style="width:auto" checked> إرسال المواعيد لولي الأمر باسم المحفظ الجديد</label></div>
+    </form>`,
+    `<button class="btn" form="mvf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $('#mvf').onsubmit = e => {
+    e.preventDefault();
+    const s2 = st || Store.student(e.target.sid.value);
+    if (!s2) return toast('اختر الطالب', true);
+    s2.teacherId = e.target.tid.value; Store.save();
+    if (e.target.send.checked && isActive(s2) && s2.slots?.length) queueSchedule(s2);
+    asg.teacher = s2.teacherId; closeModal(); toast('تم'); render();
+  };
+}
+function removeSlot(id, i) {
+  const st = Store.student(id);
+  if (!confirmBox('حذف هذا الموعد الأسبوعي؟')) return;
+  st.slots.splice(i, 1); Store.save(); render();
+}
+function removeExtra(id, eid) {
+  const st = Store.student(id);
+  if (!confirmBox('حذف هذه المحاضرة الإضافية؟')) return;
+  st.extra = (st.extra || []).filter(e => e.id !== eid); Store.save(); render();
+}
+
 /* =============== المحفظين =============== */
 function teachers() {
   return `
@@ -82,6 +277,7 @@ function teachers() {
         <button class="btn sm ghost" onclick="teacherForm('${t.id}')">تعديل</button>
         <button class="btn sm ghost" onclick="filters.teacher='${t.id}';go('students')">طلابه</button>
         <button class="btn sm ghost" onclick="lec.teacher='${t.id}';go('reports')">محاضراته</button>
+        <button class="btn sm" onclick="asg.teacher='${t.id}';go('assign')">توزيع</button>
         <button class="btn sm danger" onclick="delTeacher('${t.id}')">حذف</button></div></td></tr>`;
     }).join('')}
   </table></div>` : '<div class="card empty">لا يوجد محفظين بعد — ابدأ بإضافة أول محفظ.</div>'}`;
@@ -181,8 +377,8 @@ function slotPreview() {
   box.innerHTML = lines.length ? `<div class="note small">${lines.join('<br>')}</div>` : '';
 }
 
-function studentForm(id) {
-  const s = id ? Store.student(id) : { name: '', parentName: '', parentPhone: '', country: 'EG', teacherId: filters.teacher || '', total: S.defaultLectures, remaining: S.defaultLectures, status: 'paid', slots: [], notes: '', link: '', duration: 30 };
+function studentForm(id, presetTeacher) {
+  const s = id ? Store.student(id) : { name: '', parentName: '', parentPhone: '', country: 'EG', teacherId: presetTeacher || filters.teacher || '', total: S.defaultLectures, remaining: S.defaultLectures, status: 'paid', slots: [], notes: '', link: '', duration: 30 };
   openModal(id ? 'تعديل طالب' : 'إضافة طالب', `
     <form id="sf">
       <div class="row">
@@ -410,6 +606,7 @@ function settings() {
     <p class="muted small">المتغيرات: {student} {parent} {teacher} {dayname} {date} {time} {attendance} {remaining} {total} {schedule} {country} {academy}</p>
     <div class="field"><label>رسالة الحضور (بعد كل محاضرة)</label><textarea name="tplSession" rows="8">${esc(S.tplSession)}</textarea></div>
     <div class="field"><label>رسالة تذكير الاشتراك (مع آخر محاضرة)</label><textarea name="tplRenew" rows="6">${esc(S.tplRenew)}</textarea></div>
+    <div class="field"><label>رسالة المحاضرة الإضافية</label><textarea name="tplExtra" rows="5">${esc(S.tplExtra)}</textarea></div>
     <div class="field"><label>رسالة المواعيد</label><textarea name="tplSchedule" rows="6">${esc(S.tplSchedule)}</textarea></div>
     <button class="btn">حفظ الإعدادات</button>
   </form>
@@ -440,7 +637,7 @@ document.addEventListener('submit', async e => {
     Object.assign(S, {
       academy: d.academy.trim() || 'Qraan', whatsapp: d.whatsapp.trim(), adminCountry: d.adminCountry,
       defaultLectures: Math.max(1, +d.defaultLectures || 8), absentCounts: !!d.absentCounts, teacherCanSend: !!d.teacherCanSend,
-      tplSession: d.tplSession, tplRenew: d.tplRenew, tplSchedule: d.tplSchedule,
+      tplSession: d.tplSession, tplExtra: d.tplExtra, tplRenew: d.tplRenew, tplSchedule: d.tplSchedule,
     });
     Store.save(); toast('تم حفظ الإعدادات'); render();
   }

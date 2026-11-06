@@ -43,6 +43,11 @@ const defaultSettings = () => ({
 المحاضرات المتبقية في الباقة: {remaining} من {total}
 المحفظ: {teacher}
 {academy}`,
+  tplExtra:
+`السلام عليكم ورحمة الله وبركاته
+ولي أمر الطالب/ة: {student}
+تمت إضافة حلقة إضافية يوم {dayname} {date} الساعة {time} (بتوقيت {country}) مع المحفظ/ة {teacher}.
+{academy}`,
   tplRenew:
 `السلام عليكم ورحمة الله وبركاته
 ولي أمر الطالب/ة: {student}
@@ -155,7 +160,7 @@ function convertSlot(s, fromCountry, toCountry) {
   if (a === b) return { ...s };
   let m = slotMin(s) - tzOffset(a) + tzOffset(b);
   m = ((m % WEEK) + WEEK) % WEEK;
-  return { day: Math.floor(m / 1440), time: pad(Math.floor((m % 1440) / 60)) + ':' + pad(m % 60) };
+  return { ...s, day: Math.floor(m / 1440), time: pad(Math.floor((m % 1440) / 60)) + ':' + pad(m % 60) };
 }
 function fmtTime(t) { let [h, m] = t.split(':').map(Number); const s = h < 12 ? 'ص' : 'م'; h = h % 12 || 12; return `${h}:${pad(m)} ${s}`; }
 const fmtSlot = s => `${DAYS[s.day]} ${fmtTime(s.time)}`;
@@ -218,17 +223,23 @@ function teacherSessions(teacherId, country, pastDays = 7, nextDays = 7) {
   const recorded = new Map(Store.db.reports.filter(r => r.teacherId === teacherId && r.slotKey).map(r => [r.slotKey, r]));
   Store.db.students.filter(s => s.teacherId === teacherId).forEach(st => {
     const slots = slotsIn(st, country);
-    if (!slots.length) return;
+    if (!slots.length && !(st.extra || []).length) return;
     const since = Math.max(st.createdAt || 0, st.slotsAt || 0, lastRenewal(st));
     const list = [];
     for (let k = -pastDays; k <= nextDays; k++) {
       const day = ((n.day + k) % 7 + 7) % 7, iso = addDaysIso(n.iso, k);
       slots.filter(s => s.day === day).forEach(s => {
         const ts = occTs(iso, s.time, country), key = st.id + '@' + ts, rec = recorded.get(key);
-        if (!rec && ts < since) return;
+        if (!rec && ts < Math.max(since, s.since || 0)) return;
         list.push({ st, date: iso, day, time: s.time, ts, key, rec });
       });
     }
+    const from = occTs(addDaysIso(n.iso, -pastDays), '00:00', country), to = occTs(addDaysIso(n.iso, nextDays + 1), '00:00', country);
+    (st.extra || []).filter(e => e.ts >= from && e.ts < to).forEach(e => {
+      const l = localOf(e.ts, country), key = st.id + '@' + e.ts;
+      if (list.some(o => o.key === key)) return;
+      list.push({ st, date: l.iso, day: l.day, time: l.time, ts: e.ts, key, rec: recorded.get(key), extra: true });
+    });
     let left = isActive(st) ? st.remaining : 0;   // لا تظهر محاضرات أكثر من رصيد الباقة
     list.sort((a, b) => a.ts - b.ts).forEach(o => { if (o.rec) out.push(o); else if (left > 0) { left--; out.push(o); } });
   });
@@ -296,6 +307,28 @@ function teacherStats(teacherId, country) {
 function repWhen(r, country) {
   if (r.sessionTs) { const l = localOf(r.sessionTs, country); return { iso: l.iso, time: l.time }; }
   return { iso: r.date, time: '' };
+}
+
+/** إضافة محاضرات لرصيد الباقة الحالية (بدون تصفير) */
+function topUpStudent(st, n) {
+  n = Math.max(1, parseInt(n, 10) || 0);
+  st.total += n; st.remaining += n;
+  if (st.status === 'expired' && st.remaining > 0) st.status = 'paid';
+  (st.renewals ||= []).push({ date: Date.now(), lectures: n, topup: true });
+  Store.save();
+}
+/** تعارض موعد مع حلقات المحفظ الأخرى (دقائق الأسبوع بتوقيت المحفظ) */
+function slotConflicts(teacherId, slot, slotCountry, dur, exceptStudentId) {
+  const t = Store.teacher(teacherId); if (!t) return [];
+  const m = slotMin(convertSlot(slot, slotCountry, t.country)), out = [];
+  Store.db.students.filter(s => s.teacherId === teacherId && isActive(s)).forEach(st => {
+    slotsIn(st, t.country).forEach(x => {
+      const a = slotMin(x), d2 = st.duration || 30;
+      const overlap = [0, WEEK, -WEEK].some(k => m < a + k + d2 && a + k < m + dur);
+      if (overlap && !(st.id === exceptStudentId && a === m)) out.push(`${st.name} (${fmtSlot(x)})`);
+    });
+  });
+  return out;
 }
 
 function renewStudent(st, lectures) {

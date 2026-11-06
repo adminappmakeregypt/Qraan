@@ -150,3 +150,14 @@ td .actions{display:flex;gap:4px;flex-wrap:wrap}
 .sess-act{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
 .day-head{font-weight:700;margin:14px 0 2px;color:var(--muted)}
 @media(max-width:600px){.sess{grid-template-columns:70px 1fr}.sess-act{grid-column:1/-1;justify-content:stretch}.sess-act .btn{flex:1}}
+
+/* Assign page */
+.tpicks{display:flex;gap:8px;overflow-x:auto;margin-bottom:14px;padding-bottom:4px}
+.tpick{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 14px;font:inherit;cursor:pointer;text-align:right;display:flex;flex-direction:column;min-width:150px}
+.tpick span{font-size:12.5px;color:var(--muted)}
+.tpick.active{border-color:var(--primary);background:var(--soft);box-shadow:inset 0 0 0 1px var(--primary)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{display:inline-flex;align-items:center;gap:4px;background:var(--soft);color:var(--primary-2);border-radius:999px;padding:2px 4px 2px 10px;font-size:12.5px;white-space:nowrap}
+.chip.gold{background:var(--gold-soft);color:#7a5a14}
+.chip button{border:0;background:transparent;cursor:pointer;color:inherit;font-size:15px;line-height:1;padding:0 4px;opacity:.6}
+.chip button:hover{opacity:1;color:var(--danger)}
