@@ -13,7 +13,7 @@ const COUNTRIES = {
 };
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const GRADES = ['ممتاز', 'جيد جدًا', 'جيد', 'يحتاج متابعة'];
-const ATT = { present: 'حاضر', absent: 'غائب', excused: 'غائب بعذر' };
+const ATT = { present: 'حضر', absent: 'لم يحضر', excused: 'غائب بعذر' };
 const STATUS = { paid: 'مدفوع', expired: 'منتهي' };
 
 const defaultSettings = () => ({
@@ -21,8 +21,16 @@ const defaultSettings = () => ({
   adminEmail: '', adminHash: '',
   whatsapp: '', adminCountry: 'EG',
   defaultLectures: 8,
-  excusedCounts: false,          // هل الغياب بعذر يخصم محاضرة؟
+  absentCounts: true,            // هل الغياب يخصم محاضرة من الباقة؟
   teacherCanSend: false,         // هل يرسل المحفظ الرسالة من هاتفه مباشرة؟
+  tplSession:
+`السلام عليكم ورحمة الله وبركاته
+ولي أمر الطالب/ة: {student}
+حلقة يوم {dayname} {date} الساعة {time}
+• الحضور: {attendance}
+المحاضرات المتبقية في الباقة: {remaining} من {total}
+المحفظ: {teacher}
+{academy}`,
   tplReport:
 `السلام عليكم ورحمة الله وبركاته
 ولي أمر الطالب/ة: {student}
@@ -190,36 +198,104 @@ function queueMessage(kind, st, text) {
   return m;
 }
 
-function submitReport(st, teacher, data) {
+/* ---------- جلسات الجدول ---------- */
+function localOf(ts, country) {
+  const d = new Date(ts + tzOffset(tzOf(country), new Date(ts)) * 60000);
+  return { iso: d.toISOString().slice(0, 10), day: d.getUTCDay(), time: pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()), month: d.toISOString().slice(0, 7) };
+}
+function addDaysIso(iso, k) { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + k); return d.toISOString().slice(0, 10); }
+function occTs(iso, time, country) {
+  const [y, m, d] = iso.split('-').map(Number), [h, mi] = time.split(':').map(Number);
+  const guess = Date.UTC(y, m - 1, d, h, mi);
+  return guess - tzOffset(tzOf(country), new Date(guess)) * 60000;
+}
+const lastRenewal = st => Math.max(0, ...(st.renewals || []).map(r => r.date));
+const fmtDayDate = iso => new Date(iso + 'T12:00:00Z').toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
+
+/** محاضرات المحفظ (المسجلة + المطلوبة) من الجدول الذي حدده المدير، بتوقيت بلد المحفظ */
+function teacherSessions(teacherId, country, pastDays = 7, nextDays = 7) {
+  const n = nowIn(country), out = [];
+  const recorded = new Map(Store.db.reports.filter(r => r.teacherId === teacherId && r.slotKey).map(r => [r.slotKey, r]));
+  Store.db.students.filter(s => s.teacherId === teacherId).forEach(st => {
+    const slots = slotsIn(st, country);
+    if (!slots.length) return;
+    const since = Math.max(st.createdAt || 0, st.slotsAt || 0, lastRenewal(st));
+    const list = [];
+    for (let k = -pastDays; k <= nextDays; k++) {
+      const day = ((n.day + k) % 7 + 7) % 7, iso = addDaysIso(n.iso, k);
+      slots.filter(s => s.day === day).forEach(s => {
+        const ts = occTs(iso, s.time, country), key = st.id + '@' + ts, rec = recorded.get(key);
+        if (!rec && ts < since) return;
+        list.push({ st, date: iso, day, time: s.time, ts, key, rec });
+      });
+    }
+    let left = isActive(st) ? st.remaining : 0;   // لا تظهر محاضرات أكثر من رصيد الباقة
+    list.sort((a, b) => a.ts - b.ts).forEach(o => { if (o.rec) out.push(o); else if (left > 0) { left--; out.push(o); } });
+  });
+  return out.sort((a, b) => a.ts - b.ts);
+}
+
+function recordSession(st, teacher, occ, attendance) {
   const S = Store.db.settings;
-  if (!isActive(st)) throw new Error('اشتراك الطالب منتهي — لا يمكن رفع تقرير قبل التجديد');
-  const counts = data.attendance !== 'excused' || S.excusedCounts;
-  if (counts) st.remaining = Math.max(0, st.remaining - 1);
-  if (data.attendance === 'present') st.attended = (st.attended || 0) + 1;
-  else if (data.attendance === 'absent') st.absent = (st.absent || 0) + 1;
-  else st.excused = (st.excused || 0) + 1;
+  if (!isActive(st)) throw new Error('اشتراك الطالب منتهي — لا توجد محاضرات قبل التجديد');
+  if (Store.db.reports.some(r => r.slotKey === occ.key)) throw new Error('تم تسجيل هذه المحاضرة من قبل');
+  const counted = attendance === 'present' || S.absentCounts;
+  const lectureNo = st.total - st.remaining + 1;
+  const wasStatus = st.status;
+  if (counted) st.remaining = Math.max(0, st.remaining - 1);
+  if (attendance === 'present') st.attended = (st.attended || 0) + 1; else st.absent = (st.absent || 0) + 1;
 
   const rep = {
-    id: uid(), studentId: st.id, teacherId: teacher.id, createdAt: Date.now(), counted: counts,
-    date: data.date, attendance: data.attendance, memorized: data.memorized, review: data.review,
-    grade: data.grade, notes: data.notes, remainingAfter: st.remaining,
+    id: uid(), studentId: st.id, teacherId: teacher.id, createdAt: Date.now(), slotKey: occ.key, sessionTs: occ.ts,
+    date: occ.date, time: occ.time, attendance, counted, lectureNo, remainingAfter: st.remaining, wasStatus, msgIds: [],
   };
   Store.db.reports.push(rep);
 
-  const v = msgVars(st, {
-    date: data.date, attendance: ATT[data.attendance],
-    memorized: data.attendance === 'present' ? data.memorized : '', review: data.attendance === 'present' ? data.review : '',
-    grade: data.attendance === 'present' ? data.grade : '', notes: data.notes,
-  });
-  const msgs = [queueMessage('report', st, fill(S.tplReport, v))];
-  rep.msgId = msgs[0].id;
-
+  const loc = localOf(occ.ts, st.country);   // ولي الأمر يرى الموعد بتوقيت بلده
+  const v = msgVars(st, { date: loc.iso, dayname: DAYS[loc.day], time: fmtTime(loc.time), attendance: ATT[attendance] });
+  const msgs = [queueMessage('report', st, fill(S.tplSession, v))];
   if (st.remaining <= 0) {
     st.status = 'expired'; st.expiredAt = Date.now();
     msgs.push(queueMessage('renew', st, fill(S.tplRenew, v)));
   }
+  rep.msgIds = msgs.map(m => m.id); rep.msgId = msgs[0].id;
   Store.save();
   return { rep, msgs };
+}
+
+/** إلغاء تسجيل محاضرة (تصحيح خطأ) — يرجع الرصيد ويحذف الرسائل التي لم تُرسل */
+function undoSession(repId) {
+  const db = Store.db, r = db.reports.find(x => x.id === repId);
+  if (!r) return;
+  const st = Store.student(r.studentId);
+  if (st) {
+    if (r.counted) st.remaining = Math.min(st.total, st.remaining + 1);
+    if (r.attendance === 'present') st.attended = Math.max(0, (st.attended || 0) - 1);
+    else if (r.attendance === 'absent') st.absent = Math.max(0, (st.absent || 0) - 1);
+    else st.excused = Math.max(0, (st.excused || 0) - 1);
+    if (st.remaining > 0 && st.status === 'expired' && r.wasStatus === 'paid') st.status = 'paid';
+  }
+  const ids = r.msgIds || (r.msgId ? [r.msgId] : []);
+  db.outbox = db.outbox.filter(m => !(ids.includes(m.id) && m.status === 'pending'));
+  db.reports = db.reports.filter(x => x.id !== repId);
+  Store.save();
+}
+
+/** إحصائيات محاضرات محفظ */
+function teacherStats(teacherId, country) {
+  const month = nowIn(country).iso.slice(0, 7);
+  const reps = Store.db.reports.filter(r => r.teacherId === teacherId);
+  const inMonth = reps.filter(r => (r.sessionTs ? localOf(r.sessionTs, country).month : String(r.date).slice(0, 7)) === month);
+  return {
+    total: reps.length, month: inMonth.length,
+    present: reps.filter(r => r.attendance === 'present').length, absent: reps.filter(r => r.attendance !== 'present').length,
+    monthPresent: inMonth.filter(r => r.attendance === 'present').length,
+  };
+}
+/** وقت المحاضرة المسجلة بتوقيت بلد معين */
+function repWhen(r, country) {
+  if (r.sessionTs) { const l = localOf(r.sessionTs, country); return { iso: l.iso, time: l.time }; }
+  return { iso: r.date, time: '' };
 }
 
 function renewStudent(st, lectures) {
