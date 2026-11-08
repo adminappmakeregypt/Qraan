@@ -17,7 +17,7 @@ const views = { schedule, students, history };
 function go(tab) { current = tab; $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); render(); }
 function render() {
   $('#main').innerHTML = views[current]();
-  $('#sideFoot').innerHTML = `${esc(me.name)}<br>${countryLabel(me.country)}`;
+  $('#sideFoot').innerHTML = `${esc(me.name)}<br>${countryLabel(me.country)}${me.supervisorId ? `<br>المشرفة: ${esc(supervisorName(me.supervisorId))}` : ''}`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
 const myStudents = () => db.students.filter(s => s.teacherId === me.id);

@@ -132,6 +132,11 @@ const Store = {
   student(id) { return this.db.students.find(s => s.id === id); },
   supervisor(id) { return this.db.supervisors.find(s => s.id === id); },
 };
+/** المشرفة الفعلية للطالب: المحددة له، وإلا مشرفة محفظه — أي تغيير في المحفظ ينعكس على كل طلابه */
+const effSupervisorId = st => (st && (st.supervisorId || Store.teacher(st.teacherId)?.supervisorId)) || '';
+const supervisorName = id => Store.supervisor(id)?.name || '';
+const supervisorOptions = (sel, empty = '— بدون مشرفة —') => `<option value="">${empty}</option>` +
+  Store.db.supervisors.map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(u.name)}${u.active === false ? ' (موقوفة)' : ''}</option>`).join('');
 /** اسم المستخدم محجوز (محفظ أو مشرفة) */
 function usernameTaken(uname, exceptId) {
   const u = String(uname).trim().toLowerCase();
@@ -383,9 +388,10 @@ function unsendGroup(repId) {
 }
 
 /** إحصائيات المحفظين: محاضرات + تقارير + ما اتبعت للجروبات (month = 'YYYY-MM' أو 'all') */
-function teacherReportStats(country, month) {
-  const reps = Store.db.reports.filter(r => month === 'all' || repWhen(r, country).iso.startsWith(month));
-  return Store.db.teachers.map(t => {
+function teacherReportStats(country, month, repScope = null, teacherScope = null) {
+  const reps = Store.db.reports.filter(r => (month === 'all' || repWhen(r, country).iso.startsWith(month)) && (!repScope || repScope(r)));
+  const ts = Store.db.teachers.filter(t => !teacherScope || teacherScope(t) || reps.some(r => r.teacherId === t.id));
+  return ts.map(t => {
     const rs = reps.filter(r => r.teacherId === t.id), g = rs.filter(r => r.group);
     return {
       t, lectures: rs.length, present: rs.filter(r => r.attendance === 'present').length, absent: rs.filter(r => r.attendance !== 'present').length,
@@ -396,31 +402,33 @@ function teacherReportStats(country, month) {
 }
 
 /* ---------- واجهة مشتركة: قائمة تقارير الجروبات (المشرفة + الإدارة) ---------- */
-const grp = { tab: 'ready', teacher: '', q: '' };
+const grp = { tab: 'ready', teacher: '', sup: '', q: '' };
 let _awaitConfirm = null;
-function groupReportsView(country) {
-  const all = groupReports();
+/** scope: دالة تحدد التقارير المسموح بعرضها (للمشرفة: طلابها فقط) — بدونها (المدير) يظهر فلتر المشرفة */
+function groupReportsView(country, scope = null) {
+  const all = groupReports().filter(r => !scope || scope(r));
   const ready = all.filter(r => r.group.status !== 'sent'), sent = all.filter(r => r.group.status === 'sent');
   const q = grp.q.trim().toLowerCase();
   const list = (grp.tab === 'ready' ? ready : sent).filter(r => {
     const st = Store.student(r.studentId);
-    return (!grp.teacher || r.teacherId === grp.teacher) && (!q || ((st?.name || '') + ' ' + (r.group.groupName || '')).toLowerCase().includes(q));
+    return (!grp.teacher || r.teacherId === grp.teacher) && (scope || !grp.sup || effSupervisorId(st) === (grp.sup === 'none' ? '' : grp.sup)) && (!q || ((st?.name || '') + ' ' + (r.group.groupName || '')).toLowerCase().includes(q));
   }).sort((a, b) => grp.tab === 'ready' ? (a.sessionTs || a.createdAt) - (b.sessionTs || b.createdAt) : b.group.sentAt - a.group.sentAt);
   return `
   <div class="topbar"><h2>تقارير الحصص للجروبات</h2>
     <div class="seg" style="margin:0;min-width:280px"><button class="${grp.tab === 'ready' ? 'active' : ''}" onclick="grp.tab='ready';render()">جاهزة للإرسال (${ready.length})</button><button class="${grp.tab === 'sent' ? 'active' : ''}" onclick="grp.tab='sent';render()">المُرسلة (${sent.length})</button></div></div>
   <div class="toolbar">
     <input placeholder="🔍 بحث باسم الطالب أو الجروب" value="${esc(grp.q)}" oninput="grp.q=this.value;grpDebounce()">
-    <select onchange="grp.teacher=this.value;render()"><option value="">كل المحفظين</option>${Store.db.teachers.map(t => `<option value="${t.id}" ${t.id === grp.teacher ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+    ${scope ? '' : `<select onchange="grp.sup=this.value;render()"><option value="">كل المشرفات</option>${Store.db.supervisors.map(u => `<option value="${u.id}" ${u.id === grp.sup ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}<option value="none" ${grp.sup === 'none' ? 'selected' : ''}>بدون مشرفة</option></select>`}
+    <select onchange="grp.teacher=this.value;render()"><option value="">كل المحفظين</option>${Store.db.teachers.filter(t => !scope || all.some(r => r.teacherId === t.id) || t.supervisorId === window.WHO?.id).map(t => `<option value="${t.id}" ${t.id === grp.teacher ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
   </div>
   ${grp.tab === 'ready' ? '<div class="note small">اضغطي «إرسال للجروب» ← واتساب هيفتح والرسالة جاهزة ← اختاري الجروب (اسمه اتنسخ، الصقيه في البحث) ← إرسال ← ارجعي وأكّدي «اتبعت».</div>' : ''}
-  ${list.length ? `<div class="gcards">${list.map(r => groupCard(r, country)).join('')}</div>` : `<div class="card empty">${grp.tab === 'ready' ? 'لا توجد تقارير في انتظار الإرسال ✅' : 'لا توجد تقارير مُرسلة بعد.'}</div>`}`;
+  ${list.length ? `<div class="gcards">${list.map(r => groupCard(r, country, !scope)).join('')}</div>` : `<div class="card empty">${grp.tab === 'ready' ? 'لا توجد تقارير في انتظار الإرسال ✅' : 'لا توجد تقارير مُرسلة بعد.'}</div>`}`;
 }
-function groupCard(r, country) {
+function groupCard(r, country, showSup = false) {
   const st = Store.student(r.studentId), w = repWhen(r, country), g = r.group, sent = g.status === 'sent';
   const gname = st?.groupName || g.groupName;
   return `<div class="gcard ${sent ? 'sent' : g.openedAt ? 'opened' : ''}">
-    <div class="gcard-head"><div><b>${esc(st?.name || '—')}</b><div class="muted small">${esc(Store.teacher(r.teacherId)?.name || '—')} · الحلقة ${r.lectureNo || '—'} · ${fmtDayDate(w.iso)}${w.time ? ' ' + fmtTime(w.time) : ''}</div></div>
+    <div class="gcard-head"><div><b>${esc(st?.name || '—')}</b><div class="muted small">${esc(Store.teacher(r.teacherId)?.name || '—')} · الحلقة ${r.lectureNo || '—'} · ${fmtDayDate(w.iso)}${w.time ? ' ' + fmtTime(w.time) : ''}</div>${showSup ? `<div class="small">👩‍💼 ${esc(supervisorName(effSupervisorId(st)) || 'بدون مشرفة')}</div>` : ''}</div>
       ${sent ? '<span class="pill ok">✅ اتبعت</span>' : g.openedAt ? '<span class="pill warn">اتفتح في واتساب</span>' : '<span class="pill gold">جاهز للإرسال</span>'}</div>
     <div class="gname">${gname ? `👥 ${esc(gname)}` : '<span style="color:var(--danger)">⚠️ اسم الجروب غير مسجل للطالب</span>'}</div>
     <details><summary class="small">عرض الرسالة</summary><div class="msg-preview">${esc(r.groupText)}</div></details>
