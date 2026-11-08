@@ -4,14 +4,17 @@
 const db = Store.db;
 const S = db.settings;
 let me = null;          // بيانات المشرفة
-let current = 'teachers';
+let current = 'queue';
+const qf = { tab: 'pending', teacher: '' };
 const lf = { teacher: '', month: '' };
-const views = { teachers, lectures, evals };
+const views = { queue, teachers, lectures, evals };
 const EVAL_GRADES = ['ممتاز', 'جيد جدًا', 'جيد', 'يحتاج تحسين'];
 
 function go(tab) { current = tab; $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); render(); }
 function render() {
   $('#main').innerHTML = views[current]();
+  const pend = db.reports.filter(r => !r.supSentAt).length;
+  $('#qBadge').textContent = pend; $('#qBadge').classList.toggle('hidden', !pend);
   $('#sideFoot').innerHTML = `${esc(me.name)}<br><span class="small">مشرفة</span>`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
@@ -26,9 +29,45 @@ function tInfo(t) {
   const sts = db.students.filter(s => s.teacherId === t.id);
   const reps = db.reports.filter(r => r.teacherId === t.id).sort((a, b) => (b.sessionTs || b.createdAt) - (a.sessionTs || a.createdAt));
   const monthReps = reps.filter(r => repWhen(r, t.country).iso.startsWith(m));
-  return { st, missed, sts, active: sts.filter(isActive).length, reps, monthReps,
+  return { st, missed, sts, active: sts.filter(isActive).length, reps, monthReps, rs: reportStats(t.id, t.country, m),
     monthPresent: monthReps.filter(r => r.attendance === 'present').length, last: reps[0] };
 }
+
+/* =============== تقارير للإرسال =============== */
+function queue() {
+  const all = db.reports.map(r => { const t = Store.teacher(r.teacherId); return { r, t, w: repWhen(r, t?.country || C()) }; })
+    .sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt));
+  const pend = all.filter(x => !x.r.supSentAt);
+  const list = all.filter(x => (qf.tab === 'all' || (qf.tab === 'pending' ? !x.r.supSentAt : !!x.r.supSentAt)) && (!qf.teacher || x.r.teacherId === qf.teacher)).slice(0, 150);
+  return `
+  <div class="topbar"><h2>تقارير للإرسال</h2>
+    <div class="seg" style="margin:0;min-width:300px">
+      <button class="${qf.tab === 'pending' ? 'active' : ''}" onclick="qf.tab='pending';render()">لم تُرسل (${pend.length})</button>
+      <button class="${qf.tab === 'sent' ? 'active' : ''}" onclick="qf.tab='sent';render()">أُرسلت</button>
+      <button class="${qf.tab === 'all' ? 'active' : ''}" onclick="qf.tab='all';render()">الكل</button></div></div>
+  <div class="toolbar"><select onchange="qf.teacher=this.value;render()"><option value="">كل المحفظين</option>${db.teachers.map(t => `<option value="${t.id}" ${t.id === qf.teacher ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></div>
+  <p class="muted small">اضغطي «إرسال للجروب» ← اسم الجروب بيتنسخ وواتساب بيفتح والتقرير جاهز ← اختاري الجروب واضغطي إرسال ← ارجعي وأكدي «اتبعت».</p>
+  ${list.length ? list.map(({ r, t, w }) => {
+    const st = Store.student(r.studentId), link = reportWaLink(r);
+    return `<div class="card rq ${r.supSentAt ? 'sent' : ''}">
+      <div class="topbar" style="margin-bottom:8px"><div><b>${esc(st?.name || '—')}</b> <span class="muted small">مع ${esc(t?.name || '—')} · ${fmtDayDate(w.iso)}${w.time ? ' ' + fmtTime(w.time) : ''}</span>
+        ${r.attendance === 'present' ? '<span class="pill ok">حضر</span>' : '<span class="pill danger">غياب</span>'}</div>
+        ${r.supSentAt ? `<span class="pill ok">أُرسل ${fmtDateTime(r.supSentAt)}${r.supSentByName ? ' — ' + esc(r.supSentByName) : ''}</span>` : '<span class="pill gold">لم يُرسل</span>'}</div>
+      <details ${r.supSentAt ? '' : 'open'}><summary class="small" style="cursor:pointer;color:var(--primary)">نص التقرير</summary><div class="msg-preview" style="margin-top:6px">${esc(reportText(r))}</div></details>
+      <div class="actions" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        ${st?.groupName || link ? `<button class="btn sm wa" onclick="sendReportFlow('${r.id}', me.name, render)">📤 ${r.supSentAt ? 'إعادة الإرسال' : st?.groupName ? 'إرسال للجروب' : 'إرسال لولي الأمر'}</button>` : '<span class="pill danger">مفيش اسم جروب ولا رقم ولي أمر</span>'}
+        ${st?.groupName ? `<span class="pill gold">👥 ${esc(st.groupName)}</span>` : ''}
+        <button class="btn sm ghost" onclick="copyRep('${r.id}')">نسخ</button>
+        ${r.supSentAt ? '' : `<button class="btn sm ghost" onclick="markSentQ('${r.id}')">تم الإرسال</button>`}
+      </div></div>`;
+  }).join('') : `<div class="card empty">${qf.tab === 'pending' ? 'كل التقارير اتبعتت ✅' : 'لا توجد تقارير.'}</div>`}`;
+}
+function markSentQ(id) {
+  const r = db.reports.find(x => x.id === id); if (!r) return;
+  if (!r.supSentAt) { r.supSentAt = Date.now(); r.supSentBy = me.uid; r.supSentByName = me.name; Store.save(); }
+  setTimeout(render, 400);
+}
+function copyRep(id) { const r = db.reports.find(x => x.id === id); navigator.clipboard.writeText(reportText(r)).then(() => toast('تم النسخ')); }
 
 /* =============== محفظيني =============== */
 function teachers() {
@@ -50,6 +89,7 @@ function teachers() {
         ${i.missed ? `<span class="pill warn">${i.missed} لم تُسجل</span>` : '<span class="pill ok">منتظم</span>'}</div>
       <div class="kv"><span>طلاب نشطين</span><span><b>${i.active}</b> من ${i.sts.length}</span></div>
       <div class="kv"><span>محاضرات الشهر</span><span><b>${i.monthReps.length}</b> <span class="muted small">(حضر ${i.monthPresent})</span></span></div>
+      <div class="kv"><span>تقارير الشهر</span><span class="small">كتب <b>${i.rs.written}</b> · اتبعت <b>${i.rs.sent}</b> · لسه <b>${i.rs.pending}</b>${i.rs.noReport ? ` · <span style="color:var(--warn)">حضر بدون تقرير ${i.rs.noReport}</span>` : ''}</span></div>
       <div class="kv"><span>آخر محاضرة</span><span class="small">${i.last ? (() => { const w = repWhen(i.last, t.country); return fmtDayDate(w.iso) + (w.time ? ' ' + fmtTime(w.time) : ''); })() : '—'}</span></div>
       <div class="kv"><span>آخر تقييم منك</span><span class="small">${le ? `${esc(le.grade)} · ${fmtDate(le.createdAt)}` : '—'}</span></div>
       <div style="display:flex;gap:6px;margin-top:6px">
@@ -75,7 +115,7 @@ function details(tid) {
     <h4 style="margin:12px 0 6px">آخر المحاضرات</h4>
     ${i.reps.length ? `<div class="table-wrap"><table><tr><th>التاريخ</th><th>الطالب</th><th>الحضور</th><th>التقييم</th></tr>
       ${i.reps.slice(0, 15).map(r => { const w = repWhen(r, t.country); return `<tr><td class="small">${fmtDayDate(w.iso)}${w.time ? ' ' + fmtTime(w.time) : ''}</td><td>${esc(Store.student(r.studentId)?.name || '—')}</td>
-        <td>${r.attendance === 'present' ? '<span class="pill ok">حضر</span>' : '<span class="pill danger">لم يحضر</span>'}</td><td>${esc(r.grade || '—')}${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td></tr>`; }).join('')}</table></div>` : '<div class="empty">لا توجد محاضرات مسجلة</div>'}`,
+        <td>${r.attendance === 'present' ? '<span class="pill ok">حضر</span>' : '<span class="pill danger">لم يحضر</span>'}</td><td>${esc(r.grade || '—')}${r.newSurah ? `<div class="muted small">حفظ: ${esc(r.newSurah)}</div>` : ''}</td></tr>`; }).join('')}</table></div>` : '<div class="empty">لا توجد محاضرات مسجلة</div>'}`,
     `<button class="btn" onclick="closeModal();evalForm('${t.id}')">⭐ تقييم المحفظ</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>`);
 }
 

@@ -86,13 +86,40 @@ function mark(key, attendance) {
   const o = _occ.find(x => x.key === key);
   if (!o) return toast('المحاضرة غير موجودة', true);
   if (attendance !== 'present') return save(o, attendance);
-  // «حضر» ← اختيار التقييم
-  openModal(`تقييم ${esc(o.st.name)}`, `
-    <p class="muted small" style="margin-top:0">اختر تقييم الحصة${S.sendEval ? ' — سيُرسل لولي الأمر على واتساب' : ''}</p>
-    <div class="grades">${GRADES.map((g, i) => `<button type="button" class="grade g${i}" data-g="${g}">${['🌟', '👍', '🙂', '📌'][i]} ${g}</button>`).join('')}</div>
-    <div class="field" style="margin-top:12px"><label>ملاحظة لولي الأمر (اختياري)</label><input id="gNote" maxlength="120" placeholder="مثال: حفظ سورة النبأ كاملة"></div>`,
-    `<button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
-  $$('.grade').forEach(b => b.onclick = () => { const notes = $('#gNote').value; closeModal(); save(o, 'present', { grade: b.dataset.g, notes }); });
+  // «حضر» ← تقرير الحصة
+  const last = db.reports.filter(r => r.studentId === o.st.id && r.attendance === 'present').sort((a, b) => b.createdAt - a.createdAt)[0];
+  const lvl = (name, sel) => `<div class="lvl">${LEVELS.map((l, i) => `<label><input type="radio" name="${name}" value="${l}" ${l === sel ? 'checked' : ''}><span class="l${i}">${l}</span></label>`).join('')}</div>`;
+  openModal(`تقرير حصة ${esc(o.st.name)}`, `
+    ${last ? `<div class="note small">الواجب من الحصة اللي فاتت: حفظ «${esc(last.hwNew || '—')}» · مراجعة «${esc(last.hwRev || '—')}» — اتكتب تلقائيًا تحت</div>` : ''}
+    <form id="rpf">
+      <h4 class="rp-h">💫 تم تسميع حفظ جديد</h4>
+      <div class="field"><input name="newSurah" maxlength="80" placeholder="السورة والآيات — مثال: النبأ ١ - ١٦" value="${esc(last?.hwNew || '')}"></div>
+      ${lvl('newLevel', 'ممتاز')}
+      <h4 class="rp-h">💫 تم تسميع مراجعة</h4>
+      <div class="field"><input name="revSurah" maxlength="80" placeholder="السورة أو الجزء — مثال: جزء المجادلة" value="${esc(last?.hwRev || '')}"></div>
+      ${lvl('revLevel', 'ممتاز')}
+      <h4 class="rp-h">🌱 الواجب القادم</h4>
+      <div class="row">
+        <div class="field"><label>الحفظ الجديد</label><input name="hwNew" maxlength="80" placeholder="مثال: النبأ ١٧ - ٣٠"></div>
+        <div class="field"><label>المراجعة</label><input name="hwRev" maxlength="80" placeholder="مثال: سورة النازعات"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>💫 التجويد</label><input name="tajweed" maxlength="80" placeholder="مثال: الإظهار الحلقي"></div>
+        <div class="field"><label>💫 الشرعي</label><input name="sharia" maxlength="80" placeholder="لا يوجد"></div>
+      </div>
+      <div class="field"><label>ملاحظات لولي الأمر (اختياري)</label><input name="notes" maxlength="160"></div>
+      <p class="muted small" style="margin:0">مدة الحلقة ورقم الحلقة والتاريخ بيتكتبوا تلقائيًا. التقرير هيوصل للمشرفة لإرساله لولي الأمر.</p>
+    </form>`,
+    `<button class="btn" form="rpf">حفظ التقرير</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $('#rpf').onsubmit = e => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(e.target));
+    if (!d.newSurah.trim() && !d.revSurah.trim()) return toast('اكتب الحفظ الجديد أو المراجعة', true);
+    const report = { newSurah: d.newSurah.trim(), newLevel: d.newSurah.trim() ? d.newLevel : '', revSurah: d.revSurah.trim(), revLevel: d.revSurah.trim() ? d.revLevel : '',
+      hwNew: d.hwNew.trim(), hwRev: d.hwRev.trim(), tajweed: d.tajweed.trim(), sharia: d.sharia.trim() };
+    closeModal();
+    save(o, 'present', { grade: report.newLevel || report.revLevel, notes: d.notes, report });
+  };
 }
 async function save(o, attendance, extra) {
   try {
@@ -100,6 +127,7 @@ async function save(o, attendance, extra) {
     render();
     const auto = S.waMode === 'api', ev = msgs.some(m => m.kind === 'eval'), end = msgs.some(m => m.kind === 'renew');
     const parts = [`تم التسجيل: ${ATT[attendance]}${extra?.grade ? ' — ' + extra.grade : ''}`];
+    parts.push(me.supervisorUid ? 'والتقرير وصل للمشرفة' : 'والتقرير وصل للإدارة');
     if (ev) parts.push(auto ? 'وأُرسل التقييم لولي الأمر' : 'والتقييم في صندوق الرسائل');
     if (end) parts.push(auto ? 'وآخر محاضرة — سيصل تذكير الاشتراك تلقائيًا' : 'وآخر محاضرة — تم إبلاغ الإدارة');
     toast(parts.join(' · '));
@@ -144,7 +172,7 @@ function history() {
   ${reps.length ? `<div class="table-wrap"><table><tr><th>#</th><th>اليوم والتاريخ</th><th>الوقت</th><th>الطالب</th><th>الحضور</th><th>التقييم</th><th>رقم المحاضرة</th><th>المتبقي بعدها</th></tr>
     ${reps.map((r, i) => { const w = repWhen(r, me.country); return `<tr><td>${reps.length - i}</td><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td>
       <td>${esc(Store.student(r.studentId)?.name || '—')}</td><td>${r.attendance === 'present' ? '<span class="pill ok">حضر</span>' : '<span class="pill danger">لم يحضر</span>'}</td>
-      <td>${esc(r.grade || '—')}${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td><td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td></tr>`; }).join('')}
+      <td>${esc(r.grade || '—')}${r.newSurah ? `<div class="muted small">حفظ: ${esc(r.newSurah)}</div>` : ''}${r.revSurah ? `<div class="muted small">مراجعة: ${esc(r.revSurah)}</div>` : ''}<div class="small">${r.supSentAt ? '<span class="pill ok">أرسلته المشرفة</span>' : '<span class="pill gray">لم يُرسل بعد</span>'}</div></td><td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td></tr>`; }).join('')}
   </table></div>` : '<div class="card empty">لم تسجل محاضرات بعد.</div>'}`;
 }
 

@@ -8,7 +8,7 @@ const newStudent = (country = 'EG') => ({
   name: '', country, parentName: '', parentPhone: '',
   total: 8, remaining: 8, status: 'paid', startDate: '',
   tzBase: 'T', duration: 30, slots: [{ day: 0, time: '17:00' }],
-  level: '', link: '', notes: '',
+  level: '', link: '', notes: '', groupName: '',
 });
 let state = { teacher: { name: '', country: 'EG', phone: '', supervisor: '', notes: '' }, students: [newStudent()] };
 let sent = null;
@@ -50,6 +50,7 @@ function studentCard(s, i) {
       ${field('اسم ولي الأمر', `students.${i}.parentName`, s.parentName, 'maxlength="60"')}
       ${field('رقم واتساب ولي الأمر', `students.${i}.parentPhone`, s.parentPhone, 'required inputmode="tel" dir="ltr" placeholder="01xxxxxxxxx أو 05xxxxxxxx" maxlength="20"', true)}
     </div>
+    ${field('اسم جروب واتساب بتاع الطالب', `students.${i}.groupName`, s.groupName || '', 'maxlength="80" placeholder="اكتبه بالظبط زي ما هو في واتساب"')}
     <h4>الاشتراك</h4>
     <div class="row3">
       <div class="field"><label>عدد محاضرات الباقة <span class="req">*</span></label><input data-k="students.${i}.total" type="number" min="1" max="100" value="${s.total}" data-num></div>
@@ -158,7 +159,7 @@ async function submitAll() {
     total: +s.total, remaining: +s.remaining, status: s.status, startDate: s.startDate || '',
     tzBase: s.tzBase === 'S' ? 'S' : 'T', duration: +s.duration || 30,
     slots: s.slots.filter(x => x.time).map(x => ({ day: +x.day, time: x.time })),
-    level: s.level.trim(), link: s.link.trim(), notes: s.notes.trim(),
+    level: s.level.trim(), link: s.link.trim(), notes: s.notes.trim(), groupName: (s.groupName || '').trim(),
   });
   const t = state.teacher;
   const doc = { id, createdAt: Date.now(), status: 'new', version: 1,

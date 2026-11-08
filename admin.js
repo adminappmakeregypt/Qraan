@@ -416,7 +416,7 @@ function importIntake(id) {
       const notes = [s.level && 'المستوى: ' + s.level, s.startDate && 'آخر دفع: ' + s.startDate, s.notes].filter(Boolean).join(' — ');
       db.students.push({
         id: uid(), createdAt: Date.now(), name: s.name, parentName: s.parentName || '', parentPhone: s.parentPhone, country: s.country,
-        teacherId: teacher.id, total: Math.max(1, +s.total || 1), remaining: Math.max(0, +s.remaining || 0),
+        teacherId: teacher.id, groupName: s.groupName || '', total: Math.max(1, +s.total || 1), remaining: Math.max(0, +s.remaining || 0),
         status: (+s.remaining > 0 && s.status !== 'expired') ? 'paid' : 'expired',
         attended: 0, absent: 0, excused: 0, renewals: [], duration: +s.duration || 30, link: s.link || '', notes,
         slots: (s.slots || []).map(sl => { const c = convertSlot({ day: +sl.day, time: sl.time }, base, s.country); return { day: c.day, time: c.time, since: Date.now() }; }),
@@ -627,7 +627,7 @@ function students() {
     <tr><th>الطالب</th><th>ولي الأمر</th><th>المحفظ</th><th>المواعيد (توقيت الطالب)</th><th>المتبقي</th><th>الحضور</th><th>الاشتراك</th><th></th></tr>
     ${list.map(s => `<tr>
       <td><b>${esc(s.name)}</b><div class="muted small">${countryLabel(s.country)}</div></td>
-      <td>${esc(s.parentName || '—')}<div class="small" dir="ltr" style="text-align:right">${esc(s.parentPhone)}</div></td>
+      <td>${esc(s.parentName || '—')}<div class="small" dir="ltr" style="text-align:right">${esc(s.parentPhone)}</div>${s.groupName ? `<div class="small">👥 ${esc(s.groupName)}</div>` : ''}</td>
       <td>${teacherName(s.teacherId)}</td>
       <td><div class="list-slots">${isActive(s) ? (slotsIn(s, s.country).map(x => `<span>${fmtSlot(x)}</span>`).join('') || '<span class="muted">لا مواعيد</span>') : '<span class="muted">موقوفة لحين التجديد</span>'}</div></td>
       <td>${meter(s)}</td>
@@ -677,6 +677,7 @@ function studentForm(id, presetTeacher) {
         <div class="field"><label>اسم ولي الأمر</label><input name="parentName" value="${esc(s.parentName)}"></div>
         <div class="field"><label>واتساب ولي الأمر</label><input name="parentPhone" required dir="ltr" placeholder="05xxxxxxxx أو 01xxxxxxxxx" value="${esc(s.parentPhone)}"></div>
       </div>
+      <div class="field"><label>اسم جروب واتساب <span class="muted small">(اكتبه بالظبط زي ما هو في واتساب — التقارير بتتبعت عليه)</span></label><input name="groupName" value="${esc(s.groupName || '')}" placeholder="مثال: قرآن | عمر محمد"></div>
       <div class="field"><label>المحفظ</label><select name="teacherId" required>${teacherOptions(s.teacherId)}</select></div>
       <div class="row3">
         <div class="field"><label>عدد محاضرات الباقة</label><input name="total" type="number" min="1" value="${s.total}"></div>
@@ -703,7 +704,7 @@ function studentForm(id, presetTeacher) {
     const data = {
       name: d.name.trim(), parentName: d.parentName.trim(), parentPhone: d.parentPhone.trim(), country: d.country, teacherId: d.teacherId,
       total: Math.max(1, +d.total || 1), remaining: Math.max(0, +d.remaining || 0), notes: d.notes.trim(), slots: readSlots(),
-      link: d.link.trim(), duration: Math.max(10, +d.duration || 30),
+      link: d.link.trim(), duration: Math.max(10, +d.duration || 30), groupName: (d.groupName || '').trim(),
     };
     if (!id || JSON.stringify(s.slots) !== JSON.stringify(data.slots)) data.slotsAt = Date.now();
     data.status = data.remaining <= 0 ? 'expired' : d.status;
@@ -807,7 +808,7 @@ function reports() {
     const p = rs.filter(x => x.r.attendance === 'present').length;
     const missed = lec.month === nowM ? teacherSessions(t.id, C, 31, 0).filter(o => !o.rec && o.ts < now && o.date.startsWith(nowM)).length : 0;
     const last = rs.sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt))[0];
-    return { t, n: rs.length, p, a: rs.length - p, missed, students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
+    return { t, n: rs.length, p, a: rs.length - p, missed, rs: reportStats(t.id, C, lec.month === 'all' ? '' : lec.month), students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
       active: db.students.filter(s => s.teacherId === t.id && isActive(s)).length };
   });
   const sorters = { done: (a, b) => b.n - a.n, name: (a, b) => a.t.name.localeCompare(b.t.name, 'ar'), missed: (a, b) => b.missed - a.missed };
@@ -833,12 +834,13 @@ function reports() {
   </div>
   ${T ? lecDetail(T, inMonth, nowM) : '<p class="muted small">اضغط «التفاصيل» أمام أي محفظ لعرض محاضراته وتعديلها.</p>'}
   <div class="table-wrap"><table>
-    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>آخر محاضرة</th><th></th></tr>
+    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>التقارير: اتبعت / لسه</th><th>آخر محاضرة</th><th></th></tr>
     ${sum.map(x => `<tr class="${x.t.id === lec.teacher ? 'sel' : ''}"><td><b>${esc(x.t.name)}</b><div class="muted small">${countryLabel(x.t.country)}${x.t.supervisor ? ' · المشرفة: ' + esc(x.t.supervisor) : ''}</div></td><td>${x.active}</td>
       <td><b style="font-size:17px">${x.n}</b></td><td>${x.p}</td><td>${x.a}</td>
       <td>${x.missed ? `<span class="pill warn">${x.missed}</span>` : '—'}</td>
+      <td class="small">${x.rs.sent} / ${x.rs.pending}${x.rs.noReport ? `<div style="color:var(--warn)">حضر بدون تقرير: ${x.rs.noReport}</div>` : ''}</td>
       <td class="small">${x.last ? `${fmtDayDate(x.last.iso)}${x.last.time ? ' ' + fmtTime(x.last.time) : ''}` : '—'}</td>
-      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">لا نتائج</td></tr>'}
+      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">لا نتائج</td></tr>'}
   </table></div>
 `;
 }
@@ -866,10 +868,19 @@ function lecDetail(T, inMonth, nowM) {
           ${r.editedAt ? '<div class="muted small">عُدلت من المدير</div>' : r.byAdmin ? '<div class="muted small">سجلها المدير</div>' : ''}</td>
         <td>${esc(r.grade || '—')}${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td>
         <td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td><td class="small muted">${fmtDateTime(r.createdAt)}</td>
-        <td><button class="btn sm danger" onclick="adminUndo('${r.id}')">حذف</button></td></tr>`).join('')}
+        <td><div class="actions"><button class="btn sm ghost" onclick="showReport('${r.id}')">التقرير</button>${r.supSentAt ? '<span class="pill ok">أُرسل</span>' : ''}
+          <button class="btn sm danger" onclick="adminUndo('${r.id}')">حذف</button></div></td></tr>`).join('')}
     </table></div>` : '<div class="empty">لا توجد محاضرات مسجلة في هذه الفترة.</div>'}
   </div>`;
 }
+function showReport(id) {
+  const r = db.reports.find(x => x.id === id); if (!r) return;
+  const link = reportWaLink(r);
+  openModal('تقرير الحصة', `<div class="msg-preview">${esc(reportText(r))}</div>${r.supSentAt ? `<p class="muted small">أُرسل ${fmtDateTime(r.supSentAt)}${r.supSentByName ? ' — ' + esc(r.supSentByName) : ''}</p>` : ''}`,
+    `${link || Store.student(r.studentId)?.groupName ? `<button class="btn wa" onclick="sendReportFlow('${id}','الإدارة', render)">${Store.student(r.studentId)?.groupName ? 'إرسال للجروب' : 'إرسال لولي الأمر'}</button>` : ''}
+     <button class="btn ghost" onclick="navigator.clipboard.writeText(reportText(db.reports.find(x=>x.id==='${id}'))).then(()=>toast('تم النسخ'))">نسخ</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>`);
+}
+function markReportSent(id, by) { const r = db.reports.find(x => x.id === id); if (r && !r.supSentAt) { r.supSentAt = Date.now(); r.supSentByName = by; Store.save(); setTimeout(render, 300); } }
 function adminEdit(id, att) { editSession(id, att); toast('تم تعديل الحضور'); render(); }
 function adminRecord(i, att) {
   const o = _missed[i]; if (!o) return;
@@ -949,8 +960,12 @@ function settings() {
       <div class="field"><label>عدد محاضرات الباقة الافتراضي</label><input name="defaultLectures" type="number" min="1" value="${S.defaultLectures}"></div>
     </div>
     <div class="field"><label><input type="checkbox" name="absentCounts" style="width:auto" ${S.absentCounts ? 'checked' : ''}> «لم يحضر» يُخصم من محاضرات الباقة</label></div>
-    <h3 style="margin-top:10px">رسالة تقييم الحصة</h3>
-    <div class="field"><label><input type="checkbox" name="sendEval" style="width:auto" ${S.sendEval ? 'checked' : ''}> إرسال تقييم الحصة لولي الأمر بعد كل «حضر»</label></div>
+    <h3 style="margin-top:10px">تقرير الحصة (يكتبه المحفظ ← ترسله المشرفة لولي الأمر)</h3>
+    <p class="muted small">المتغيرات: {academy} {teacher} {student} {newSurah} {newLevel} {revSurah} {revLevel} {tajweed} {sharia} {notesLine} {duration} {lectureNo} {dayname} {date}</p>
+    <div class="field"><textarea name="tplReport2" rows="14" style="direction:rtl">${esc(S.tplReport2)}</textarea></div>
+    <div class="field"><label>رسالة الغياب</label><textarea name="tplAbsent" rows="5">${esc(S.tplAbsent)}</textarea></div>
+    <h3 style="margin-top:10px">رسالة تقييم تلقائية عبر WhatsApp API <span class="muted small">(اختياري)</span></h3>
+    <div class="field"><label><input type="checkbox" name="sendEvalApi" style="width:auto" ${S.sendEvalApi ? 'checked' : ''}> إرسال تقييم مختصر لولي الأمر تلقائيًا بعد كل «حضر» (بالإضافة لتقرير المشرفة)</label></div>
     <p class="muted small">المتغيرات بالترتيب في قالب Meta: <b dir="ltr">{{1}}</b> اسم الطالب · <b dir="ltr">{{2}}</b> التاريخ · <b dir="ltr">{{3}}</b> التقييم · <b dir="ltr">{{4}}</b> ملاحظات المحفظ · <b dir="ltr">{{5}}</b> المحاضرات المتبقية</p>
     <div class="field"><textarea name="tplEval" rows="6">${esc(S.tplEval)}</textarea></div>
     <h3 style="margin-top:10px">رسالة واتساب (انتهاء الباقة)</h3>
@@ -1010,7 +1025,8 @@ document.addEventListener('submit', async e => {
     Object.assign(S, {
       academy: d.academy.trim() || 'Qraan', whatsapp: d.whatsapp.trim(), adminCountry: d.adminCountry,
       defaultLectures: Math.max(1, +d.defaultLectures || 8), absentCounts: !!d.absentCounts,
-      tplEnd: d.tplEnd.trim() || S.tplEnd, sendEval: !!d.sendEval, tplEval: d.tplEval.trim() || S.tplEval,
+      tplEnd: d.tplEnd.trim() || S.tplEnd, sendEvalApi: !!d.sendEvalApi, tplEval: d.tplEval.trim() || S.tplEval,
+      tplReport2: d.tplReport2.trim() || S.tplReport2, tplAbsent: d.tplAbsent.trim() || S.tplAbsent,
     });
     Store.save(); toast('تم حفظ الإعدادات'); render();
   }

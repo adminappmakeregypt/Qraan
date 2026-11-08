@@ -12,6 +12,7 @@ const COUNTRIES = {
 };
 const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const GRADES = ['ممتاز', 'جيد جدًا', 'جيد', 'يحتاج متابعة'];
+const LEVELS = ['ممتاز', 'جيد جدًا', 'جيد', 'مقبول', 'يحتاج إعادة'];   // مستوى الحفظ / المراجعة في تقرير الحصة
 const ATT = { present: 'حضر', absent: 'لم يحضر', excused: 'غائب بعذر' };
 const STATUS = { paid: 'مدفوع', expired: 'منتهي' };
 
@@ -25,8 +26,47 @@ const defaultSettings = () => ({
 `السلام عليكم
 نذكركم أن اليوم كانت آخر محاضرة تحفيظ قرآن.
 برجاء دفع قيمة الاشتراك الجديد.`,
-  // ===== رسالة تقييم الحصة (بعد «حضر») =====
-  sendEval: true,
+  // ===== تقرير الحصة: المحفظ يكتبه ← المشرفة ترسله لولي الأمر =====
+  tplReport2:
+`🌸 {academy} 🌸
+تقرير الحصة
+
+اسم المعلم/ة: {teacher}
+اسم الطالب/ة: {student}
+👑👑👑👑👑
+
+💫 تم تسميع حفظ جديد:
+سورة: {newSurah}
+مستوى الحفظ: {newLevel}
+
+💫 تم تسميع مراجعة:
+سورة: {revSurah}
+مستوى الحفظ: {revLevel}
+🌱🌱🌱🌱🌱🌱
+الواجب القادم:
+💫 الحفظ الجديد
+سورة: {hwNew}
+⋯⋯⋯⋯ ❁❁❁ ⋯⋯⋯⋯
+💫 المراجعة
+سورة: {hwRev}
+
+💫 التجويد: {tajweed}
+
+💫 الشرعي: {sharia}
+{notesLine}⋯⋯⋯⋯ ❁❁❁ ⋯⋯⋯⋯
+مدة الحلقة: {duration}
+رقم الحلقة: {lectureNo}
+تاريخ الحلقة: {dayname} {date}
+👑👑👑👑👑
+جعلنا الله وإياكم من أهل القرآن العاملين به 🤲
+🌹🌹🌹🌹🌹`,
+  tplAbsent:
+`🌸 {academy} 🌸
+السلام عليكم ولي أمر الطالب/ة: {student}
+نحيطكم علمًا بغياب الطالب/ة عن حلقة يوم {dayname} {date} مع المعلم/ة {teacher}.
+نرجو الحرص على حضور الحلقات القادمة، جزاكم الله خيرًا 🌹`,
+  // ===== رسالة تقييم الحصة التلقائية عبر API (اختياري — الافتراضي: المشرفة ترسل التقرير بنفسها) =====
+  sendEvalApi: false,
   tplEval:
 `السلام عليكم
 معكم أكاديمية الصفوة لتحفيظ القرآن الكريم.
@@ -194,7 +234,7 @@ const Store = {
       this.db.reports.forEach(r => { if (!r.teacherUid) r.teacherUid = this.uid; if (!('supervisorUid' in r)) r.supervisorUid = sup; });
     }
     this.db.outbox.forEach(m => { if (!m.createdBy) m.createdBy = this.uid; });
-    const colls = this.role === 'admin' ? COLLS : this.role === 'supervisor' ? ['teacherEvals'] : ['students', 'reports', 'outbox'];
+    const colls = this.role === 'admin' ? COLLS : this.role === 'supervisor' ? ['teacherEvals', 'reports'] : ['students', 'reports', 'outbox'];
     for (const c of colls) {
       const next = {};
       for (const item of this.db[c]) {
@@ -249,6 +289,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const pad = n => String(n).padStart(2, '0');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fill = (tpl, v) => tpl.replace(/\{(\w+)\}/g, (m, k) => (v[k] ?? '') === '' ? '—' : v[k]);
+const fillRaw = (tpl, v) => tpl.replace(/\{(\w+)\}/g, (m, k) => v[k] ?? '');
 const countryLabel = c => COUNTRIES[c] ? `${COUNTRIES[c].flag} ${COUNTRIES[c].name}` : '—';
 const countryOptions = sel => Object.entries(COUNTRIES).map(([k, c]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${c.flag} ${c.name}</option>`).join('');
 const fmtDate = ts => new Date(ts).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -415,10 +456,11 @@ function recordSession(st, teacher, occ, attendance, extra = {}) {
     date: occ.date, time: occ.time, attendance, counted, lectureNo, remainingAfter: st.remaining, wasStatus, msgIds: [],
   };
   if (attendance === 'present' && extra.grade) { rep.grade = extra.grade; rep.notes = (extra.notes || '').trim(); }
+  if (attendance === 'present' && extra.report) Object.assign(rep, extra.report, { duration: st.duration || 30 });   // تقرير الحصة الكامل
   Store.db.reports.push(rep);
 
   const msgs = [];
-  if (rep.grade && S.sendEval) {   // رسالة تقييم الحصة لولي الأمر
+  if (rep.grade && S.sendEvalApi) {   // رسالة تقييم تلقائية (لو مفعّلة)
     const loc = localOf(occ.ts, st.country);
     const v = msgVars(st, { date: loc.iso, grade: rep.grade, notes: rep.notes || '—' });
     msgs.push(queueMessage('eval', st, fill(S.tplEval, v), [st.name, loc.iso, rep.grade, rep.notes, st.remaining]));
@@ -430,6 +472,55 @@ function recordSession(st, teacher, occ, attendance, extra = {}) {
   rep.msgIds = msgs.map(m => m.id); rep.msgId = msgs[0]?.id || null;
   Store.save();
   return { rep, msgs };
+}
+
+/* ---------- نص تقرير الحصة (للمشرفة/المدير لإرساله لولي الأمر) ---------- */
+const durationText = m => ({ 30: 'نصف ساعة', 45: '45 دقيقة', 60: 'ساعة' }[m] || (m ? m + ' دقيقة' : '—'));
+function reportText(r) {
+  const S = Store.db.settings, st = Store.student(r.studentId), t = Store.teacher(r.teacherId);
+  const loc = r.sessionTs ? localOf(r.sessionTs, st?.country || t?.country || 'EG') : { iso: r.date, day: new Date(r.date).getDay() };
+  const v = {
+    academy: S.academy, teacher: t?.name || '', student: st?.name || '', dayname: DAYS[loc.day] ?? '', date: String(loc.iso).replace(/-/g, '/'),
+    newSurah: r.newSurah || '—', newLevel: r.newLevel || '—', revSurah: r.revSurah || '—', revLevel: r.revLevel || '—',
+    hwNew: r.hwNew || '—', hwRev: r.hwRev || '—',
+    tajweed: r.tajweed || 'لا يوجد', sharia: r.sharia || 'لا يوجد', notesLine: r.notes ? `\nملاحظات المعلم/ة: ${r.notes}\n` : '',
+    duration: durationText(r.duration || st?.duration), lectureNo: r.lectureNo || '—',
+  };
+  return fillRaw(r.attendance === 'present' ? (S.tplReport2 || defaultSettings().tplReport2) : (S.tplAbsent || defaultSettings().tplAbsent), v).replace(/\n{3,}/g, '\n\n');
+}
+function reportWaLink(r) {
+  const st = Store.student(r.studentId), ph = st && normPhone(st.parentPhone, st.country);
+  return ph ? waLink(ph, reportText(r)) : null;
+}
+const hasReport = r => r.attendance === 'present' && !!(r.newSurah || r.revSurah || r.hwNew || r.hwRev);
+/** إرسال التقرير: لجروب الطالب (ينسخ اسم الجروب ويفتح واتساب لاختيار المحادثة) أو لرقم ولي الأمر — ثم سؤال «اتبعت؟» */
+function sendReportFlow(id, by, after) {
+  const r = Store.db.reports.find(x => x.id === id); if (!r) return;
+  const st = Store.student(r.studentId), text = reportText(r), group = (st?.groupName || '').trim();
+  if (group) {
+    try { navigator.clipboard.writeText(group); } catch (e) { }
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  } else {
+    const link = reportWaLink(r);
+    if (!link) return toast('مفيش اسم جروب ولا رقم ولي أمر لهذا الطالب', true);
+    window.open(link, '_blank');
+  }
+  openModal('هل اتبعت التقرير؟', `
+    ${group ? `<div class="note">اتنسخ اسم الجروب: <b>${esc(group)}</b><br>في واتساب ابحثي عن الجروب (الصقي الاسم في البحث) واختاريه واضغطي إرسال.</div>` : `<div class="note">اتفتح واتساب على رقم ولي أمر <b>${esc(st?.name || '')}</b> — اضغطي إرسال.</div>`}
+    <p>بعد ما تبعتي في واتساب، ارجعي هنا وأكدي.</p>`,
+    `<button class="btn" id="cfSent">✅ اتبعت</button><button class="btn ghost" onclick="closeModal()">لسه</button>`);
+  $('#cfSent').onclick = () => {
+    if (!r.supSentAt) { r.supSentAt = Date.now(); r.supSentBy = Store.uid; r.supSentByName = by; r.sentTo = group ? 'group:' + group : 'parent'; Store.save(); }
+    closeModal(); toast('تم تسجيل الإرسال ✅'); after && after();
+  };
+}
+/** إحصائيات تقارير محفظ (لشهر معين أو كل الفترات) */
+function reportStats(teacherId, country, month) {
+  const reps = Store.db.reports.filter(r => r.teacherId === teacherId && (!month || repWhen(r, country).iso.startsWith(month)));
+  const present = reps.filter(r => r.attendance === 'present');
+  const written = present.filter(hasReport);
+  return { lectures: reps.length, present: present.length, written: written.length, sent: reps.filter(r => r.supSentAt).length,
+    pending: reps.filter(r => !r.supSentAt && (hasReport(r) || r.attendance !== 'present')).length, noReport: present.length - written.length };
 }
 
 /** إلغاء تسجيل محاضرة (تصحيح خطأ) — يرجع الرصيد ويحذف الرسائل التي لم تُرسل */

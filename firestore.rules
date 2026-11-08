@@ -59,7 +59,9 @@ service cloud.firestore {
       allow read: if isAdmin() || mine(resource.data) || supervises(resource.data);
       allow create: if isAdmin() || (mine(request.resource.data)
         && get(/databases/$(database)/documents/qraan_students/$(request.resource.data.studentId)).data.teacherUid == request.auth.uid);
-      allow update: if isAdmin();
+      // المشرفة تعلّم التقرير «أُرسل لولي الأمر» فقط
+      allow update: if isAdmin() || (supervises(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['supSentAt', 'supSentBy', 'supSentByName', 'sentTo']));
       // المحفظ يقدر يتراجع خلال 24 ساعة فقط
       allow delete: if isAdmin() || (mine(resource.data) && request.time.toMillis() - resource.data.createdAt < 86400000);
     }
