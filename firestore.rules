@@ -6,6 +6,7 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/qraan_admins/$(request.auth.uid)); }
     function mine(d) { return signedIn() && d.teacherUid == request.auth.uid; }
+    function supervises(d) { return signedIn() && d.supervisorUid == request.auth.uid; }
 
     // إعداد أول مرة: يتم مرة واحدة فقط
     match /qraan_config/setup {
@@ -27,12 +28,25 @@ service cloud.firestore {
     }
 
     match /qraan_teachers/{id} {
-      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid) || supervises(resource.data);
       allow write: if isAdmin();
     }
 
+    // المشرفات
+    match /qraan_supervisors/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+    // تقييم المشرفة للمحفظ
+    match /qraan_teacherEvals/{id} {
+      allow read: if isAdmin() || supervises(resource.data);
+      allow create: if isAdmin() || (supervises(request.resource.data)
+        && get(/databases/$(database)/documents/qraan_teachers/$(request.resource.data.teacherId)).data.supervisorUid == request.auth.uid);
+      allow update, delete: if isAdmin() || supervises(resource.data);
+    }
+
     match /qraan_students/{id} {
-      allow read: if isAdmin() || mine(resource.data);
+      allow read: if isAdmin() || mine(resource.data) || supervises(resource.data);
       allow create, delete: if isAdmin();
       // المحفظ يغيّر فقط عدادات الحضور والرصيد (± محاضرة واحدة في كل مرة)
       allow update: if isAdmin() || (mine(resource.data)
@@ -42,7 +56,7 @@ service cloud.firestore {
     }
 
     match /qraan_reports/{id} {
-      allow read: if isAdmin() || mine(resource.data);
+      allow read: if isAdmin() || mine(resource.data) || supervises(resource.data);
       allow create: if isAdmin() || (mine(request.resource.data)
         && get(/databases/$(database)/documents/qraan_students/$(request.resource.data.studentId)).data.teacherUid == request.auth.uid);
       allow update: if isAdmin();

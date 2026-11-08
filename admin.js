@@ -6,7 +6,7 @@ const S = db.settings;
 let current = 'dashboard';
 const filters = { teacher: '', status: '', country: '', q: '' };
 
-const views = { dashboard, assign, intake, teachers, students, schedule, reports, outbox, settings };
+const views = { dashboard, assign, intake, supervisors, teachers, students, schedule, reports, outbox, settings };
 
 function go(tab) {
   current = tab;
@@ -355,7 +355,8 @@ function importIntake(id) {
   const t = x.teacher, st = x.students || [];
   const match = db.teachers.find(y => normPhone(y.phone, y.country) && normPhone(y.phone, y.country) === normPhone(t.phone, t.country));
   const digits = String(t.phone).replace(/\D/g, '');
-  let uname = 't' + digits.slice(-4); while (db.teachers.some(y => y.username.toLowerCase() === uname)) uname += Math.floor(Math.random() * 10);
+  let uname = newUsername('t', digits);
+  const supName = (t.supervisor || '').trim(), supMatch = db.supervisors.find(y => y.name.trim() === supName);
   const dupOf = s => db.students.find(y => y.name.trim() === s.name.trim() && normPhone(y.parentPhone, y.country) === normPhone(s.parentPhone, s.country));
   openModal(`استيراد بيانات ${esc(t.name)}`, `
     <form id="imf">
@@ -373,6 +374,10 @@ function importIntake(id) {
           <div class="field"><label>رقم الدخول</label><input name="code" inputmode="numeric" pattern="[0-9]{3,10}" value="${Math.floor(1000 + Math.random() * 9000)}"></div>
         </div>
       </div>
+      <div class="field"><label>المشرفة <span class="muted small">(كتب: «${esc(supName || '—')}»)</span></label><select name="sup">
+        <option value="">— بدون —</option>
+        ${supName && !supMatch ? `<option value="__new" selected>➕ إنشاء حساب مشرفة «${esc(supName)}»</option>` : ''}
+        ${db.supervisors.map(y => `<option value="${y.id}" ${supMatch && supMatch.id === y.id ? 'selected' : ''}>${esc(y.name)}</option>`).join('')}</select></div>
       <div id="imOld" class="field hidden"><label>المحفظ</label><select name="tid">${db.teachers.map(y => `<option value="${y.id}" ${match && match.id === y.id ? 'selected' : ''}>${esc(y.name)}</option>`).join('')}</select></div>
       <h4 style="margin:10px 0 6px">الطلاب</h4>
       ${st.map((s, i) => { const d = dupOf(s); return `<label class="ist" style="display:flex;gap:10px;align-items:flex-start;font-weight:500">
@@ -390,12 +395,20 @@ function importIntake(id) {
     if (f.mode.value === 'old') teacher = Store.teacher(f.tid.value);
     else {
       const un = f.username.value.trim();
-      if (!un || db.teachers.some(y => y.username.toLowerCase() === un.toLowerCase())) { btn.disabled = false; btn.textContent = 'استيراد'; return toast('اسم المستخدم مستخدم بالفعل أو فارغ', true); }
+      if (!un || userTaken(un)) { btn.disabled = false; btn.textContent = 'استيراد'; return toast('اسم المستخدم مستخدم بالفعل أو فارغ', true); }
       teacher = { id: uid(), createdAt: Date.now(), name: f.name.value.trim() || t.name, username: un, code: f.code.value.trim(), country: t.country, phone: t.phone, supervisor: f.supervisor.value.trim(), active: true };
       try { await ensureTeacherAuth(teacher); }
       catch (err) { btn.disabled = false; btn.textContent = 'استيراد'; return toast('تعذر إنشاء حساب الدخول: ' + (err.code === 'auth/email-already-in-use' ? 'اسم المستخدم مستخدم' : err.message), true); }
       db.teachers.push(teacher);
     }
+    // المشرفة
+    let newSup = null;
+    if (f.sup.value === '__new') {
+      newSup = { id: uid(), createdAt: Date.now(), name: supName, phone: '', username: newUsername('m', ''), code: String(Math.floor(1000 + Math.random() * 9000)), active: true };
+      try { await ensureTeacherAuth(newSup); db.supervisors.push(newSup); teacher.supervisorId = newSup.id; }
+      catch (err) { newSup = null; toast('تعذر إنشاء حساب المشرفة — تقدر تعمله من صفحة المشرفات', true); }
+    } else if (f.sup.value) teacher.supervisorId = f.sup.value;
+    const supRec = Store.supervisor(teacher.supervisorId); if (supRec) teacher.supervisor = supRec.name; else if (supName && !teacher.supervisor) teacher.supervisor = supName;
     let n = 0;
     st.forEach((s, i) => {
       if (!f['s' + i].checked) return;
@@ -418,11 +431,107 @@ function importIntake(id) {
     const ph = normPhone(teacher.phone, teacher.country);
     openModal('تم الاستيراد ✅', `<p>تم إنشاء حساب <b>${esc(teacher.name)}</b> وإضافة <b>${n}</b> طالب بمواعيدهم في الجدول.</p>
       <div class="note"><b>بيانات دخول المحفظ:</b><br>اسم المستخدم: <b dir="ltr">${esc(teacher.username)}</b><br>الرقم: <b dir="ltr">${esc(teacher.code)}</b></div>
+      ${newSup ? `<div class="note"><b>تم إنشاء حساب المشرفة ${esc(newSup.name)}:</b><br>اسم المستخدم: <b dir="ltr">${esc(newSup.username)}</b> · الرقم: <b dir="ltr">${esc(newSup.code)}</b><br><span class="small">ابعتيلها بيانات الدخول من صفحة «المشرفات».</span></div>` : ''}
       <div class="msg-preview">${esc(msg)}</div>`,
       `${ph ? `<a class="btn wa" target="_blank" href="${waLink(ph, msg)}">إرسال للمحفظ على واتساب</a>` : ''}
        <button class="btn ghost" onclick="navigator.clipboard.writeText(${esc(JSON.stringify(msg))}).then(()=>toast('تم النسخ'))">نسخ</button>
        <button class="btn ghost" onclick="closeModal()">تم</button>`);
   };
+}
+
+/* =============== المشرفات =============== */
+const userTaken = (u, exceptId) => [...db.teachers, ...db.supervisors].some(x => x.id !== exceptId && String(x.username).toLowerCase() === String(u).toLowerCase());
+const newUsername = (prefix, phone) => { let u = prefix + (String(phone || '').replace(/\D/g, '').slice(-4) || Math.floor(1000 + Math.random() * 9000)); while (userTaken(u)) u += Math.floor(Math.random() * 10); return u; };
+function supervisors() {
+  const m = nowIn(S.adminCountry).iso.slice(0, 7);
+  const orphanNames = [...new Set(db.teachers.filter(t => !t.supervisorId && t.supervisor).map(t => t.supervisor.trim()))]
+    .filter(n => !db.supervisors.some(s => s.name.trim() === n));
+  return `
+  <div class="topbar"><h2>المشرفات</h2><button class="btn" onclick="supForm()">+ إضافة مشرفة</button></div>
+  ${orphanNames.length ? `<div class="note">أسماء مشرفات مكتوبة في بيانات المحفظين وليس لها حساب:
+    ${orphanNames.map(n => `<button class="btn sm gold" style="margin:4px" onclick="supForm(null, ${esc(JSON.stringify(n))})">إنشاء حساب «${esc(n)}»</button>`).join('')}</div>` : ''}
+  ${db.supervisors.length ? `<div class="table-wrap"><table>
+    <tr><th>المشرفة</th><th>الهاتف</th><th>اسم المستخدم</th><th>الرقم</th><th>المحفظين</th><th>تقييمات الشهر</th><th>الحالة</th><th></th></tr>
+    ${db.supervisors.map(s => {
+      const ts = db.teachers.filter(t => t.supervisorId === s.id);
+      const ev = db.teacherEvals.filter(e => e.supervisorId === s.id && e.month === m).length;
+      return `<tr><td><b>${esc(s.name)}</b></td><td dir="ltr" style="text-align:right">${esc(s.phone || '—')}</td><td dir="ltr" style="text-align:right">${esc(s.username)}</td><td><code>${esc(s.code)}</code></td>
+        <td>${ts.length}<div class="muted small">${ts.slice(0, 3).map(t => esc(t.name)).join('، ')}${ts.length > 3 ? '…' : ''}</div></td>
+        <td>${ev} / ${ts.length}</td>
+        <td>${s.active === false ? '<span class="pill gray">موقوفة</span>' : '<span class="pill ok">فعالة</span>'}</td>
+        <td><div class="actions">
+          <button class="btn sm" onclick="supTeachers('${s.id}')">المحفظين</button>
+          <button class="btn sm ghost" onclick="supForm('${s.id}')">تعديل</button>
+          <button class="btn sm wa" onclick="sendLogin('supervisor','${s.id}')">بيانات الدخول</button>
+          <button class="btn sm danger" onclick="delSup('${s.id}')">حذف</button></div></td></tr>`;
+    }).join('')}
+  </table></div>` : '<div class="card empty">لا توجد مشرفات بعد — أضيفي أول مشرفة، ثم اربطي بها المحفظين.</div>'}
+  ${db.teacherEvals.length ? `<div class="card" style="margin-top:16px"><h3>آخر تقييمات المشرفات للمحفظين</h3><div class="table-wrap"><table>
+    <tr><th>التاريخ</th><th>المشرفة</th><th>المحفظ</th><th>التقييم</th><th>ملاحظات</th></tr>
+    ${db.teacherEvals.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 30).map(e => `<tr><td class="small">${fmtDateTime(e.createdAt)}</td><td>${esc(e.supervisorName || Store.supervisor(e.supervisorId)?.name || '—')}</td>
+      <td>${esc(e.teacherName || Store.teacher(e.teacherId)?.name || '—')}</td><td><b>${esc(e.grade)}</b></td><td class="small">${esc(e.notes || '—')}</td></tr>`).join('')}
+  </table></div></div>` : ''}`;
+}
+function supForm(id, presetName) {
+  const s = id ? Store.supervisor(id) : { name: presetName || '', phone: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), active: true };
+  if (!id) s.username = newUsername('m', '');
+  const matchT = db.teachers.filter(t => !t.supervisorId && presetName && (t.supervisor || '').trim() === presetName.trim());
+  openModal(id ? 'تعديل مشرفة' : 'إضافة مشرفة', `
+    <form id="sf2">
+      <div class="row"><div class="field"><label>الاسم</label><input name="name" required value="${esc(s.name)}"></div>
+        <div class="field"><label>رقم الواتساب</label><input name="phone" dir="ltr" value="${esc(s.phone)}"></div></div>
+      <div class="row"><div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(s.username)}" ${id ? 'disabled' : ''}></div>
+        <div class="field"><label>رقم الدخول</label><input name="code" required inputmode="numeric" pattern="[0-9]{3,10}" value="${esc(s.code)}"></div></div>
+      <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${s.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
+      ${matchT.length ? `<div class="note small">سيتم ربط ${matchT.length} محفظ مكتوب عندهم اسمها: ${matchT.map(t => esc(t.name)).join('، ')}</div>` : ''}
+    </form>`, `<button class="btn" form="sf2">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $('#sf2').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target)), un = (f.username || s.username).trim();
+    if (!id && userTaken(un)) return toast('اسم المستخدم مستخدم بالفعل', true);
+    const btn = $('.modal .foot .btn'); btn.disabled = true; btn.textContent = 'جارٍ الحفظ...';
+    const target = { ...(id ? s : { id: uid(), createdAt: Date.now() }), name: f.name.trim(), phone: f.phone.trim(), username: un, code: f.code.trim(), active: !!f.active };
+    try { await ensureTeacherAuth(target, id ? s.code : null); }
+    catch (err) { btn.disabled = false; btn.textContent = 'حفظ'; return toast(err.code === 'auth/email-already-in-use' ? 'اسم المستخدم مستخدم بالفعل' : 'تعذر إنشاء حساب الدخول: ' + err.message, true); }
+    if (id) Object.assign(s, target); else db.supervisors.push(target);
+    matchT.forEach(t => { t.supervisorId = target.id; });
+    db.teachers.filter(t => t.supervisorId === target.id).forEach(t => { t.supervisor = target.name; });
+    await Store.save(); closeModal(); render();
+    if (!id) sendLogin('supervisor', target.id); else toast('تم الحفظ');
+  };
+}
+function supTeachers(id) {
+  const s = Store.supervisor(id);
+  openModal(`محفظين ${esc(s.name)}`, `<form id="stf">
+    <input placeholder="🔍 بحث" oninput="$$('#stf .ist').forEach(l=>l.style.display=l.textContent.includes(this.value)?'':'none')" style="margin-bottom:8px">
+    ${db.teachers.map(t => `<label class="ist" style="display:flex;gap:10px;font-weight:500"><input type="checkbox" name="t" value="${t.id}" style="width:auto" ${t.supervisorId === id ? 'checked' : ''}>
+      <span><b>${esc(t.name)}</b> <span class="muted small">${t.supervisorId && t.supervisorId !== id ? '— حاليًا مع ' + esc(Store.supervisor(t.supervisorId)?.name || '') : t.supervisor && !t.supervisorId ? '— مكتوب: ' + esc(t.supervisor) : ''}</span></span></label>`).join('') || '<div class="empty">لا يوجد محفظين</div>'}
+  </form>`, `<button class="btn" form="stf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $('#stf').onsubmit = e => {
+    e.preventDefault();
+    const sel = new Set($$('#stf input[name=t]:checked').map(x => x.value));
+    db.teachers.forEach(t => { if (sel.has(t.id)) { t.supervisorId = id; t.supervisor = s.name; } else if (t.supervisorId === id) { t.supervisorId = ''; } });
+    Store.save(); closeModal(); toast('تم الحفظ'); render();
+  };
+}
+function delSup(id) {
+  const s = Store.supervisor(id), n = db.teachers.filter(t => t.supervisorId === id).length;
+  if (!confirmBox(n ? `المشرفة مربوط بها ${n} محفظ — سيصبحون بدون مشرفة. متابعة؟` : 'حذف المشرفة؟')) return;
+  db.teachers.forEach(t => { if (t.supervisorId === id) t.supervisorId = ''; });
+  db.supervisors = db.supervisors.filter(x => x.id !== id);
+  Store.save(); render(); if (s) deleteTeacherAuth(s);
+}
+/** رسالة بيانات الدخول (محفظ أو مشرفة) جاهزة للإرسال على واتساب */
+function sendLogin(kind, id) {
+  const x = kind === 'supervisor' ? Store.supervisor(id) : Store.teacher(id); if (!x) return;
+  const site = location.href.replace(/[^/]*$/, '');
+  const msg = kind === 'supervisor'
+    ? `السلام عليكم ${x.name}\nتم إنشاء حسابك كمشرفة في نظام Qraan ✅\nرابط الدخول: ${site}\nاسم المستخدم: ${x.username}\nالرقم: ${x.code}\nمن صفحتك هتلاقي المحفظين اللي تحت إشرافك، وتقدري تقيّميهم وتبعتي التقييم على واتساب.`
+    : `السلام عليكم ${x.name}\nتم تسجيلك في نظام Qraan ✅\nرابط الدخول: ${site}\nاسم المستخدم: ${x.username}\nالرقم: ${x.code}\nمن صفحة «جدولي» سجّل حضور كل حصة واختار التقييم.`;
+  const ph = normPhone(x.phone, kind === 'supervisor' ? S.adminCountry : x.country);
+  openModal(`بيانات دخول ${esc(x.name)}`, `<div class="note"><b>اسم المستخدم:</b> <span dir="ltr">${esc(x.username)}</span><br><b>الرقم:</b> <span dir="ltr">${esc(x.code)}</span></div><div class="msg-preview">${esc(msg)}</div>`,
+    `${ph ? `<a class="btn wa" target="_blank" href="${waLink(ph, msg)}">إرسال على واتساب</a>` : '<span class="muted small">لا يوجد رقم واتساب</span>'}
+     <button class="btn ghost" onclick="navigator.clipboard.writeText(${esc(JSON.stringify(msg))}).then(()=>toast('تم النسخ'))">نسخ</button><button class="btn ghost" onclick="closeModal()">تم</button>`);
 }
 
 /* =============== المحفظين =============== */
@@ -433,13 +542,14 @@ function teachers() {
     <tr><th>الاسم</th><th>المشرفة</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>البلد</th><th>الهاتف</th><th>الطلاب</th><th>محاضرات الشهر</th><th>إجمالي المحاضرات</th><th>الحالة</th><th></th></tr>
     ${db.teachers.map(t => {
       const sts = db.students.filter(s => s.teacherId === t.id), ts = teacherStats(t.id, S.adminCountry);
-      return `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.supervisor || '—')}</td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
+      return `<tr><td><b>${esc(t.name)}</b></td><td>${t.supervisorId ? esc(Store.supervisor(t.supervisorId)?.name || '—') : t.supervisor ? `<span class="muted">${esc(t.supervisor)}</span> <span class="pill gold" title="غير مربوط بحساب مشرفة">غير مربوط</span>` : '—'}</td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
       <td>${countryLabel(t.country)}</td><td dir="ltr" style="text-align:right">${esc(t.phone || '—')}</td>
       <td>${sts.filter(isActive).length} نشط / ${sts.length}</td>
       <td><b>${ts.month}</b></td><td>${ts.total} <span class="muted small">(✅ ${ts.present} · ❌ ${ts.absent})</span></td>
       <td>${t.active === false ? '<span class="pill gray">موقوف</span>' : '<span class="pill ok">فعال</span>'}</td>
       <td><div class="actions">
         <button class="btn sm ghost" onclick="teacherForm('${t.id}')">تعديل</button>
+        <button class="btn sm wa" onclick="sendLogin('teacher','${t.id}')">بيانات الدخول</button>
         <button class="btn sm ghost" onclick="filters.teacher='${t.id}';go('students')">طلابه</button>
         <button class="btn sm ghost" onclick="lec.teacher='${t.id}';go('reports')">محاضراته</button>
         <button class="btn sm" onclick="asg.teacher='${t.id}';go('assign')">الجدول</button>
@@ -461,8 +571,8 @@ function teacherForm(id) {
         <div class="field"><label>البلد</label><select name="country">${countryOptions(t.country)}</select></div>
         <div class="field"><label>الهاتف</label><input name="phone" value="${esc(t.phone)}"></div>
       </div>
-      <div class="field"><label>المشرفة</label><input name="supervisor" value="${esc(t.supervisor || '')}" list="supList">
-        <datalist id="supList">${[...new Set(db.teachers.map(x => x.supervisor).filter(Boolean))].map(x => `<option value="${esc(x)}">`).join('')}</datalist></div>
+      <div class="field"><label>المشرفة</label><select name="supervisorId"><option value="">— بدون —</option>${db.supervisors.map(x => `<option value="${x.id}" ${x.id === t.supervisorId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+        ${!t.supervisorId && t.supervisor ? `<p class="muted small" style="margin:4px 0 0">مكتوب في بياناته: «${esc(t.supervisor)}» — اختاري المشرفة من القائمة لربطه بحسابها.</p>` : ''}</div>
       <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${t.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
     </form>`,
     `<button class="btn" form="tf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
@@ -470,10 +580,12 @@ function teacherForm(id) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     const uname = (f.username || t.username).trim();
-    if (!id && db.teachers.some(x => x.username.toLowerCase() === uname.toLowerCase())) return toast('اسم المستخدم مستخدم بالفعل', true);
+    if (!id && userTaken(uname)) return toast('اسم المستخدم مستخدم بالفعل', true);
     const btn = $('.modal .foot .btn'); btn.disabled = true; btn.textContent = 'جارٍ الحفظ...';
     const oldCode = id ? t.code : null;
-    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), supervisor: (f.supervisor || '').trim(), active: !!f.active };
+    const sup = Store.supervisor(f.supervisorId);
+    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), supervisorId: f.supervisorId || '', supervisor: sup ? sup.name : (t.supervisor || ''), active: !!f.active };
+    if (!id && db.supervisors.some(x => x.username.toLowerCase() === uname.toLowerCase())) return toast('اسم المستخدم مستخدم لمشرفة', true);
     const target = id ? { ...t, ...data } : { id: uid(), createdAt: Date.now(), ...data };
     try { await ensureTeacherAuth(target, oldCode); }
     catch (err) {

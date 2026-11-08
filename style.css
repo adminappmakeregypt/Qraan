@@ -225,3 +225,7 @@ body.reg{background:var(--bg)}
 .ist{font-size:13.5px;border-top:1px dashed var(--line);padding:8px 0}
 .linkbox{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .linkbox input{flex:1;min-width:220px;direction:ltr;background:#faf8f2}
+/* grade radio (supervisor eval) */
+.gr-opt{margin:0;cursor:pointer}.gr-opt input{display:none}
+.gr-opt .grade{display:block;text-align:center;opacity:.55}
+.gr-opt input:checked+.grade{opacity:1;box-shadow:0 0 0 3px rgba(15,107,79,.25)}

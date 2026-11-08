@@ -132,22 +132,28 @@ async function deleteTeacherAuth(t) {
 
 /* ---------- التخزين (Firestore مع مزامنة لحظية) ---------- */
 const stable = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)) ? Object.keys(x).sort().reduce((o, key) => (o[key] = x[key], o), {}) : x);
-const COLLS = ['teachers', 'students', 'reports', 'outbox', 'intake'];
+const COLLS = ['teachers', 'students', 'reports', 'outbox', 'intake', 'supervisors', 'teacherEvals'];
 const Store = {
-  db: { settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [], intake: [] },
-  _last: { teachers: {}, students: {}, reports: {}, outbox: {}, intake: {}, settings: '' },
+  db: { settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [], intake: [], supervisors: [], teacherEvals: [] },
+  _last: { teachers: {}, students: {}, reports: {}, outbox: {}, intake: {}, supervisors: {}, teacherEvals: {}, settings: '' },
   role: null, uid: null, onChange: null, _subs: [],
   load() { return this.db; },
   teacher(id) { return this.db.teachers.find(t => t.id === id); },
   student(id) { return this.db.students.find(s => s.id === id); },
+  supervisor(id) { return this.db.supervisors.find(s => s.id === id); },
 
   /** بدء الاستماع للبيانات حسب الدور — المدير يرى كل شيء، المحفظ يرى بياناته فقط */
   start(role, uid) {
     this.role = role; this.uid = uid;
     const fs = FB.fs;
+    const col = c => fs.collection(P(c));
     const qs = role === 'admin'
-      ? { teachers: fs.collection(P('teachers')), students: fs.collection(P('students')), reports: fs.collection(P('reports')), outbox: fs.collection(P('outbox')), intake: fs.collection(P('intake')) }
-      : { teachers: fs.collection(P('teachers')).where('uid', '==', uid), students: fs.collection(P('students')).where('teacherUid', '==', uid), reports: fs.collection(P('reports')).where('teacherUid', '==', uid) };
+      ? Object.fromEntries(COLLS.map(c => [c, col(c)]))
+      : role === 'supervisor'   // المشرفة: المحفظين اللي تحتها وطلابهم ومحاضراتهم + تقييماتها
+        ? { supervisors: col('supervisors').where('uid', '==', uid), teachers: col('teachers').where('supervisorUid', '==', uid),
+            students: col('students').where('supervisorUid', '==', uid), reports: col('reports').where('supervisorUid', '==', uid),
+            teacherEvals: col('teacherEvals').where('supervisorUid', '==', uid) }
+        : { teachers: col('teachers').where('uid', '==', uid), students: col('students').where('teacherUid', '==', uid), reports: col('reports').where('teacherUid', '==', uid) };
     const listen = (ref, onData) => new Promise((res, rej) => {
       let first = true;
       this._subs.push(ref.onSnapshot(snap => { onData(snap); if (first) { first = false; res(); } else this._changed(); },
@@ -177,10 +183,18 @@ const Store = {
     if (!this.role) return Promise.resolve();
     const fs = FB.fs, main = [], ob = [];
     const tUid = id => this.db.teachers.find(t => t.id === id)?.uid || '';
-    if (this.role === 'admin') this.db.students.forEach(s => { s.teacherUid = tUid(s.teacherId); });
-    this.db.reports.forEach(r => { if (!r.teacherUid) r.teacherUid = this.role === 'teacher' ? this.uid : tUid(r.teacherId); });
+    if (this.role === 'admin') {
+      // ربط المحفظ بالمشرفة، ونسخ معرّف المشرفة على طلابه ومحاضراته (علشان تقدر تشوفهم)
+      this.db.teachers.forEach(t => { const s = this.supervisor(t.supervisorId); t.supervisorUid = s?.uid || ''; if (s) t.supervisor = s.name; });
+      const sUid = id => this.teacher(id)?.supervisorUid || '';
+      this.db.students.forEach(s => { s.teacherUid = tUid(s.teacherId); s.supervisorUid = sUid(s.teacherId); });
+      this.db.reports.forEach(r => { if (!r.teacherUid) r.teacherUid = tUid(r.teacherId); r.supervisorUid = sUid(r.teacherId); });
+    } else if (this.role === 'teacher') {
+      const sup = this.db.teachers[0]?.supervisorUid || '';
+      this.db.reports.forEach(r => { if (!r.teacherUid) r.teacherUid = this.uid; if (!('supervisorUid' in r)) r.supervisorUid = sup; });
+    }
     this.db.outbox.forEach(m => { if (!m.createdBy) m.createdBy = this.uid; });
-    const colls = this.role === 'admin' ? COLLS : ['students', 'reports', 'outbox'];
+    const colls = this.role === 'admin' ? COLLS : this.role === 'supervisor' ? ['teacherEvals'] : ['students', 'reports', 'outbox'];
     for (const c of colls) {
       const next = {};
       for (const item of this.db[c]) {
@@ -220,6 +234,7 @@ function boot(role) {
         if (role === 'admin' && !(await F.fs.doc(P('admins') + '/' + u.uid).get()).exists) throw new Error('not admin');
         await Store.start(role, u.uid);
         if (role === 'teacher') { const t = Store.db.teachers[0]; if (!t || t.active === false) throw new Error('inactive'); }
+        if (role === 'supervisor') { const s = Store.db.supervisors[0]; if (!s || s.active === false) throw new Error('inactive'); }
         resolve(u);
       } catch (e) { console.error(e); try { await F.auth.signOut(); } catch (x) { } location.href = 'index.html'; }
     });

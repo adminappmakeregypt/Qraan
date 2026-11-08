@@ -33,7 +33,7 @@
     <!-- تسجيل الدخول -->
     <div id="loginBox" class="hidden">
       <div class="seg">
-        <button type="button" data-tab="teacher" class="active">محفظ</button>
+        <button type="button" data-tab="teacher" class="active">محفظ / مشرفة</button>
         <button type="button" data-tab="admin">المدير</button>
       </div>
       <form id="teacherForm">
@@ -77,14 +77,24 @@
       if ((await F.fs.doc(P('admins') + '/' + u.uid).get()).exists) return location.href = 'admin.html';
       const t = await F.fs.collection(P('teachers')).where('uid', '==', u.uid).get();
       if (!t.empty && t.docs[0].data().active !== false) return location.href = 'teacher.html';
-      await F.auth.signOut(); toast(t.empty ? 'الحساب غير مرتبط بمحفظ' : 'الحساب موقوف — تواصل مع الإدارة', true);
+      const s = t.empty ? await F.fs.collection(P('supervisors')).where('uid', '==', u.uid).get() : { empty: true };
+      if (!s.empty && s.docs[0].data().active !== false) return location.href = 'supervisor.html';
+      await F.auth.signOut(); toast(t.empty && s.empty ? 'الحساب غير مرتبط بمحفظ أو مشرفة' : 'الحساب موقوف — تواصل مع الإدارة', true);
     } catch (e) { console.error(e); await F.auth.signOut(); toast(errMsg(e), true); }
     routing = false; showForms();
   }
   async function showForms() {
     $('#loading').classList.add('hidden');
     let setupDone = true;
-    try { setupDone = (await F.fs.doc(P('config') + '/setup').get()).exists; } catch (e) { console.error(e); }
+    try { setupDone = (await F.fs.doc(P('config') + '/setup').get()).exists; }
+    catch (e) {
+      console.error(e);
+      if (e.code === 'permission-denied') {
+        $('#loading').classList.remove('hidden');
+        $('#loading').innerHTML = '<div class="note" style="text-align:right">⚠️ قواعد الحماية لسه متنشرتش في Firebase.<br>افتح ملف <b>firestore.rules</b> وانسخ محتواه، ثم في Firebase ← Firestore ← <b>Rules</b> الصقه واضغط <b>Publish</b>، وبعدين حدّث الصفحة (F5).</div>';
+        return;
+      }
+    }
     $('#setupForm').classList.toggle('hidden', setupDone);
     $('#loginBox').classList.toggle('hidden', !setupDone);
   }

@@ -11,27 +11,20 @@
   <aside class="side">
     <div class="brand">Qraan</div>
     <nav id="nav">
-      <button data-tab="dashboard" class="active">🏠 الرئيسية</button>
-      <button data-tab="assign">📅 الجدول والحصص</button>
-      <button data-tab="groups">📨 تقارير الجروبات <span class="badge hidden" id="grpBadge"></span></button>
-      <button data-tab="reports">📊 محاضرات المحفظين</button>
-      <button data-tab="teachers">👳 المحفظين</button>
-      <button data-tab="students">🎓 الطلاب</button>
-      <button data-tab="supervisors">👩‍💼 المشرفات</button>
-      <button data-tab="schedule">🗓️ الجدول العام</button>
-      <button data-tab="outbox">💬 رسائل واتساب <span class="badge hidden" id="outBadge"></span></button>
-      <button data-tab="settings">⚙️ الإعدادات</button>
+      <button data-tab="teachers" class="active">👥 محفظيني</button>
+      <button data-tab="lectures">📊 المحاضرات</button>
+      <button data-tab="evals">⭐ تقييماتي</button>
       <button onclick="logout()">↩︎ خروج</button>
     </nav>
     <div class="foot" id="sideFoot"></div>
   </aside>
-  <main class="main" id="main"></main>
+  <main class="main" id="main"><div class="empty">جارٍ تحميل البيانات...</div></main>
 </div>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="core.js"></script>
-<script src="admin.js"></script>
+<script src="supervisor.js"></script>
 </body>
 </html>
