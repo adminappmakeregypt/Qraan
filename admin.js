@@ -1,16 +1,30 @@
-/* ===================== Qraan — لوحة المدير ===================== */
+/* ===================== Qraan — لوحة المدير / المشرفة ===================== */
 'use strict';
 
-if (Session.get()?.role !== 'admin') location.href = 'index.html';
+// نفس اللوحة للمدير وللمشرفة — المشرفة تشوف وتعدل المحفظين والطلاب التابعين لها بس
+const SES = Session.get();
 const db = Store.load();
 const S = db.settings;
-window.WHO = { role: 'admin', id: 'admin', name: 'المدير' };
-let current = 'dashboard';
+const IS_SUP = SES?.role === 'supervisor';
+const ME = IS_SUP ? Store.supervisor(SES.id) : null;
+if (IS_SUP ? (!ME || ME.active === false || !location.pathname.endsWith('supervisor.html')) : (SES?.role !== 'admin' || location.pathname.endsWith('supervisor.html'))) { Session.clear(); location.href = 'index.html'; }
+window.WHO = IS_SUP ? { role: 'supervisor', id: ME?.id, name: ME?.name } : { role: 'admin', id: 'admin', name: 'المدير' };
+/** المحفظين والطلاب الظاهرين (للمشرفة: التابعين لها فقط) */
+const VT = () => IS_SUP ? db.teachers.filter(t => t.supervisorId === ME.id) : db.teachers;
+const VS = () => IS_SUP ? db.students.filter(s => effSupervisorId(s) === ME.id) : db.students;
+const ADMIN_ONLY = ['supervisors', 'outbox', 'settings'];
+let current = IS_SUP ? 'groups' : 'dashboard';
 const filters = { teacher: '', sup: '', status: '', country: '', q: '' };
 
-const views = { dashboard, assign, teachers, supervisors, students, schedule, reports, groups: () => groupReportsView(S.adminCountry), outbox, settings };
+const grpScope = r => !IS_SUP || effSupervisorId(Store.student(r.studentId)) === ME.id;
+const views = { dashboard, assign, teachers, supervisors, students, schedule, reports, groups: () => groupReportsView(S.adminCountry, IS_SUP ? grpScope : null), outbox, settings };
+if (IS_SUP) {
+  $$('#nav button[data-tab]').forEach(b => { if (ADMIN_ONLY.includes(b.dataset.tab)) b.remove(); });
+  $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === current));
+}
 
 function go(tab) {
+  if (IS_SUP && ADMIN_ONLY.includes(tab)) return;
   current = tab;
   $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
@@ -18,40 +32,40 @@ function go(tab) {
 function render() {
   $('#main').innerHTML = views[current]();
   const pending = db.outbox.filter(m => m.status === 'pending').length;
-  $('#outBadge').textContent = pending; $('#outBadge').classList.toggle('hidden', !pending);
-  const gr = groupReports().filter(r => r.group.status !== 'sent').length;
+  $('#outBadge')?.classList.toggle('hidden', !pending); if ($('#outBadge')) $('#outBadge').textContent = pending;
+  const gr = groupReports().filter(r => grpScope(r) && r.group.status !== 'sent').length;
   $('#grpBadge').textContent = gr; $('#grpBadge').classList.toggle('hidden', !gr);
-  $('#sideFoot').innerHTML = `${esc(S.academy)}<br>${esc(S.adminEmail)}`;
+  $('#sideFoot').innerHTML = IS_SUP ? `${esc(ME.name)}<br>${esc(S.academy)}` : `${esc(S.academy)}<br>${esc(S.adminEmail)}`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
 const teacherName = id => esc(Store.teacher(id)?.name || '— بدون محفظ —');
 const teacherOptions = (sel, withEmpty = true) =>
   (withEmpty ? '<option value="">— اختر —</option>' : '') +
-  db.teachers.map(t => `<option value="${t.id}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  VT().map(t => `<option value="${t.id}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
 
 /* =============== الرئيسية =============== */
 function dashboard() {
-  const active = db.students.filter(isActive);
-  const expired = db.students.filter(s => !isActive(s));
+  const active = VS().filter(isActive);
+  const expired = VS().filter(s => !isActive(s));
   const low = active.filter(s => s.remaining <= 2);
   const todayIso = nowIn(S.adminCountry).iso;
-  const todayReports = db.reports.filter(r => repWhen(r, S.adminCountry).iso === todayIso);
+  const todayReports = db.reports.filter(r => (!IS_SUP || VT().some(t => t.id === r.teacherId)) && repWhen(r, S.adminCountry).iso === todayIso);
   const pending = db.outbox.filter(m => m.status === 'pending');
 
   // حلقات اليوم بتوقيت المدير
   const n = nowIn(S.adminCountry);
-  const today = db.teachers.flatMap(t => teacherSessions(t.id, S.adminCountry, 0, 0)).sort((a, b) => a.ts - b.ts);
+  const today = VT().flatMap(t => teacherSessions(t.id, S.adminCountry, 0, 0)).sort((a, b) => a.ts - b.ts);
 
   return `
   <div class="topbar"><h2>السلام عليكم 👋</h2><span class="muted">${DAYS[n.day]} — التوقيت: ${countryLabel(S.adminCountry)}</span></div>
   <div class="stats">
-    <div class="stat"><div class="n">${db.teachers.length}</div><div class="l">محفظ</div></div>
+    <div class="stat"><div class="n">${VT().length}</div><div class="l">محفظ</div></div>
     <div class="stat"><div class="n">${active.length}</div><div class="l">طالب اشتراكه مدفوع</div></div>
     <div class="stat danger"><div class="n">${expired.length}</div><div class="l">اشتراك منتهي</div></div>
     <div class="stat warn"><div class="n">${low.length}</div><div class="l">قارب على الانتهاء (≤ 2)</div></div>
     <div class="stat gold clickable" onclick="go('reports')"><div class="n">${todayReports.length}</div><div class="l">محاضرات سُجلت اليوم ←</div></div>
-    <div class="stat"><div class="n">${pending.length}</div><div class="l">رسائل في انتظار الإرسال</div></div>
-    <div class="stat warn clickable" onclick="grp.tab='ready';go('groups')"><div class="n">${groupReports().filter(r => r.group.status !== 'sent').length}</div><div class="l">تقارير جاهزة للجروبات ←</div></div>
+    ${IS_SUP ? '' : `<div class="stat"><div class="n">${pending.length}</div><div class="l">رسائل في انتظار الإرسال</div></div>`}
+    <div class="stat warn clickable" onclick="grp.tab='ready';go('groups')"><div class="n">${groupReports().filter(r => grpScope(r) && r.group.status !== 'sent').length}</div><div class="l">تقارير جاهزة للجروبات ←</div></div>
   </div>
   <div class="row">
     <div class="card"><h3>حلقات اليوم (بتوقيتك)</h3>
@@ -63,7 +77,7 @@ function dashboard() {
     <div class="card"><h3>اشتراكات تحتاج متابعة</h3>
       ${[...expired, ...low].length ? `<div class="table-wrap"><table><tr><th>الطالب</th><th>المتبقي</th><th>الحالة</th><th></th></tr>
         ${[...expired, ...low].map(s => `<tr><td>${esc(s.name)}<div class="muted small">${teacherName(s.teacherId)}</div></td><td>${s.remaining}</td><td>${statusPill(s)}</td>
-          <td><button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button></td></tr>`).join('')}
+          <td>${IS_SUP ? '' : `<button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>`}</td></tr>`).join('')}
       </table></div>` : '<div class="empty">كل الاشتراكات سليمة ✅</div>'}
     </div>
   </div>`;
@@ -78,9 +92,9 @@ const baseCountry = (k, st, t) => k === 'S' ? st.country : k === 'A' ? S.adminCo
 
 function teacherList(sel, onPick) {
   const q = asg.q.trim().toLowerCase();
-  const list = db.teachers.filter(t => !q || (t.name + ' ' + t.username).toLowerCase().includes(q));
+  const list = VT().filter(t => !q || (t.name + ' ' + t.username).toLowerCase().includes(q));
   return `<aside class="tlist">
-    <input placeholder="🔍 ابحث عن محفظ (${db.teachers.length})" value="${esc(asg.q)}" oninput="asg.q=this.value;refreshTList()">
+    <input placeholder="🔍 ابحث عن محفظ (${VT().length})" value="${esc(asg.q)}" oninput="asg.q=this.value;refreshTList()">
     <div class="tlist-items" id="tlistItems">${list.map(t => {
       const act = db.students.filter(s => s.teacherId === t.id && isActive(s)).length;
       return `<button class="${t.id === sel ? 'active' : ''}" onclick="${onPick}('${t.id}')"><b>${esc(t.name)}</b><span>${COUNTRIES[t.country].flag} ${act} طالب</span></button>`;
@@ -94,8 +108,8 @@ function refreshTList() {
 function pickAssign(id) { asg.teacher = id; asg.tz = ''; render(); }
 
 function assign() {
-  if (!db.teachers.length) return '<div class="topbar"><h2>الجدول والحصص</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
-  if (!Store.teacher(asg.teacher)) asg.teacher = db.teachers[0].id;
+  if (!VT().length) return '<div class="topbar"><h2>الجدول والحصص</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
+  if (!VT().some(t => t.id === asg.teacher)) asg.teacher = VT()[0].id;
   const t = Store.teacher(asg.teacher), view = asg.tz || t.country;
   const sts = db.students.filter(s => s.teacherId === t.id);
   const stt = teacherStats(t.id, S.adminCountry);
@@ -150,7 +164,7 @@ function assign() {
 function sessionModal(teacherId, day, studentId, slotIdx) {
   const t = Store.teacher(teacherId), editing = studentId != null && slotIdx != null;
   const st0 = studentId ? Store.student(studentId) : null;
-  const mine = db.students.filter(s => s.teacherId === teacherId), others = db.students.filter(s => s.teacherId !== teacherId);
+  const mine = db.students.filter(s => s.teacherId === teacherId), others = VS().filter(s => s.teacherId !== teacherId);
   const cur = editing ? convertSlot(st0.slots[slotIdx], st0.country, t.country) : { day, time: '17:00' };
   openModal(editing ? `تعديل حصة — ${esc(st0.name)}` : `حصة جديدة — ${esc(t.name)}`, `
     <form id="smf">
@@ -278,12 +292,12 @@ function topUpForm(id) {
 
 function moveStudentForm(toTeacher, studentId) {
   const st = studentId ? Store.student(studentId) : null;
-  const candidates = db.students.filter(s => s.teacherId !== toTeacher);
+  const candidates = VS().filter(s => s.teacherId !== toTeacher);
   openModal(st ? `نقل ${esc(st.name)} لمحفظ آخر` : 'تعيين طالب حالي لهذا المحفظ', `
     <form id="mvf">
       ${st ? '' : `<div class="field"><label>الطالب</label><select name="sid" required><option value="">— اختر —</option>
         ${candidates.map(s => `<option value="${s.id}">${esc(s.name)} — ${s.teacherId ? 'حاليًا مع ' + teacherName(s.teacherId) : 'بدون محفظ'}</option>`).join('')}</select></div>`}
-      <div class="field"><label>المحفظ الجديد</label><select name="tid" required>${db.teachers.filter(x => !st || x.id !== st.teacherId).map(x => `<option value="${x.id}" ${x.id === toTeacher ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>المحفظ الجديد</label><select name="tid" required>${VT().filter(x => !st || x.id !== st.teacherId).map(x => `<option value="${x.id}" ${x.id === toTeacher ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
       <p class="muted small">المحاضرات المسجلة سابقًا تبقى في سجل المحفظ القديم. المواعيد تنتقل كما هي.</p>
     </form>`,
     `<button class="btn" form="mvf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
@@ -310,9 +324,9 @@ function removeExtra(id, eid) {
 function teachers() {
   return `
   <div class="topbar"><h2>المحفظين</h2><button class="btn" onclick="teacherForm()">+ إضافة محفظ</button></div>
-  ${db.teachers.length ? `<div class="table-wrap"><table>
+  ${VT().length ? `<div class="table-wrap"><table>
     <tr><th>الاسم</th><th>المشرفة</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>البلد</th><th>الهاتف</th><th>الطلاب</th><th>محاضرات الشهر</th><th>إجمالي المحاضرات</th><th>الحالة</th><th></th></tr>
-    ${db.teachers.map(t => {
+    ${VT().map(t => {
       const sts = db.students.filter(s => s.teacherId === t.id), ts = teacherStats(t.id, S.adminCountry);
       return `<tr><td><b>${esc(t.name)}</b></td><td>${t.supervisorId ? esc(supervisorName(t.supervisorId)) : '<span class="pill warn">بدون مشرفة</span>'}</td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
       <td>${countryLabel(t.country)}</td><td dir="ltr" style="text-align:right">${esc(t.phone || '—')}</td>
@@ -324,13 +338,13 @@ function teachers() {
         <button class="btn sm ghost" onclick="filters.teacher='${t.id}';go('students')">طلابه</button>
         <button class="btn sm ghost" onclick="lec.teacher='${t.id}';go('reports')">محاضراته</button>
         <button class="btn sm" onclick="asg.teacher='${t.id}';go('assign')">الجدول</button>
-        <button class="btn sm danger" onclick="delTeacher('${t.id}')">حذف</button></div></td></tr>`;
+        ${IS_SUP ? '' : `<button class="btn sm danger" onclick="delTeacher('${t.id}')">حذف</button>`}</div></td></tr>`;
     }).join('')}
   </table></div>` : '<div class="card empty">لا يوجد محفظين بعد — ابدأ بإضافة أول محفظ.</div>'}`;
 }
 
 function teacherForm(id, presetSup) {
-  const t = id ? Store.teacher(id) : { name: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), country: 'EG', phone: '', active: true, supervisorId: presetSup || '' };
+  const t = id ? Store.teacher(id) : { name: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), country: 'EG', phone: '', active: true, supervisorId: presetSup || (IS_SUP ? ME.id : '') };
   openModal(id ? 'تعديل محفظ' : 'إضافة محفظ', `
     <form id="tf">
       <div class="field"><label>الاسم</label><input name="name" required value="${esc(t.name)}"></div>
@@ -342,7 +356,7 @@ function teacherForm(id, presetSup) {
         <div class="field"><label>البلد</label><select name="country">${countryOptions(t.country)}</select></div>
         <div class="field"><label>الهاتف</label><input name="phone" value="${esc(t.phone)}"></div>
       </div>
-      <div class="field"><label>المشرفة</label><select name="supervisorId">${supervisorOptions(t.supervisorId)}</select>
+      <div class="field ${IS_SUP ? 'hidden' : ''}"><label>المشرفة</label><select name="supervisorId">${IS_SUP ? `<option value="${ME.id}" selected>${esc(ME.name)}</option>` : supervisorOptions(t.supervisorId)}</select>
         <p class="muted small" style="margin:2px 0 0">كل طلاب المحفظ بيتبعوا مشرفته تلقائيًا (إلا لو طالب له مشرفة مختلفة).</p></div>
       <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${t.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
     </form>`,
@@ -424,18 +438,18 @@ function delSupervisor(id) {
 /* =============== الطلاب =============== */
 function students() {
   const q = filters.q.trim().toLowerCase();
-  const list = db.students.filter(s =>
+  const list = VS().filter(s =>
     (!filters.teacher || s.teacherId === filters.teacher) &&
     (!filters.sup || effSupervisorId(s) === (filters.sup === 'none' ? '' : filters.sup)) &&
     (!filters.country || s.country === filters.country) &&
     (!filters.status || (filters.status === 'paid' ? isActive(s) : !isActive(s))) &&
     (!q || (s.name + ' ' + s.parentName + ' ' + s.parentPhone + ' ' + (s.groupName || '')).toLowerCase().includes(q)));
   return `
-  <div class="topbar"><h2>الطلاب</h2><button class="btn" onclick="studentForm()" ${db.teachers.length ? '' : 'disabled title="أضف محفظًا أولًا"'}>+ إضافة طالب</button></div>
+  <div class="topbar"><h2>الطلاب</h2><button class="btn" onclick="studentForm()" ${VT().length ? '' : 'disabled title="أضف محفظًا أولًا"'}>+ إضافة طالب</button></div>
   <div class="toolbar">
     <input placeholder="بحث بالاسم أو ولي الأمر أو الهاتف" value="${esc(filters.q)}" oninput="filters.q=this.value;debounceRender()">
     <select onchange="filters.teacher=this.value;render()"><option value="">كل المحفظين</option>${teacherOptions(filters.teacher, false)}</select>
-    <select onchange="filters.sup=this.value;render()"><option value="">كل المشرفات</option>${db.supervisors.map(u => `<option value="${u.id}" ${u.id === filters.sup ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}<option value="none" ${filters.sup === 'none' ? 'selected' : ''}>بدون مشرفة</option></select>
+    <select class="${IS_SUP ? 'hidden' : ''}" onchange="filters.sup=this.value;render()"><option value="">كل المشرفات</option>${db.supervisors.map(u => `<option value="${u.id}" ${u.id === filters.sup ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}<option value="none" ${filters.sup === 'none' ? 'selected' : ''}>بدون مشرفة</option></select>
     <select onchange="filters.status=this.value;render()">
       <option value="">كل الحالات</option><option value="paid" ${filters.status === 'paid' ? 'selected' : ''}>مدفوع</option><option value="expired" ${filters.status === 'expired' ? 'selected' : ''}>منتهي</option></select>
     <select onchange="filters.country=this.value;render()"><option value="">كل الدول</option>${countryOptions(filters.country)}</select>
@@ -452,9 +466,9 @@ function students() {
       <td>${statusPill(s)}</td>
       <td><div class="actions">
         <button class="btn sm ghost" onclick="studentForm('${s.id}')">تعديل</button>
-        <button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>
+        ${IS_SUP ? '' : `<button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>`}
         <button class="btn sm ghost" onclick="studentLog('${s.id}')">السجل</button>
-        <button class="btn sm danger" onclick="delStudent('${s.id}')">حذف</button></div></td>
+        ${IS_SUP ? '' : `<button class="btn sm danger" onclick="delStudent('${s.id}')">حذف</button>`}</div></td>
     </tr>`).join('')}
   </table></div>` : '<div class="card empty">لا يوجد طلاب مطابقين.</div>'}`;
 }
@@ -496,7 +510,7 @@ function studentForm(id, presetTeacher) {
       </div>
       <div class="row">
         <div class="field"><label>المحفظ</label><select name="teacherId" required>${teacherOptions(s.teacherId)}</select></div>
-        <div class="field"><label>المشرفة</label><select name="supervisorId" id="stSup"></select></div>
+        <div class="field ${IS_SUP ? 'hidden' : ''}"><label>المشرفة</label><select name="supervisorId" id="stSup"></select></div>
       </div>
       <div class="field"><label>اسم جروب واتساب (زي ما هو في واتساب)</label><input name="groupName" placeholder="مثال: قرآن | أحمد محمد" value="${esc(s.groupName || '')}"></div>
       <div class="row3">
@@ -532,7 +546,7 @@ function studentForm(id, presetTeacher) {
       name: d.name.trim(), parentName: d.parentName.trim(), parentPhone: d.parentPhone.trim(), country: d.country, teacherId: d.teacherId,
       total: Math.max(1, +d.total || 1), remaining: Math.max(0, +d.remaining || 0), notes: d.notes.trim(), slots: readSlots(),
       link: d.link.trim(), duration: Math.max(10, +d.duration || 30), groupName: (d.groupName || '').trim(),
-      supervisorId: d.supervisorId && d.supervisorId !== Store.teacher(d.teacherId)?.supervisorId ? d.supervisorId : '',
+      supervisorId: IS_SUP ? '' : (d.supervisorId && d.supervisorId !== Store.teacher(d.teacherId)?.supervisorId ? d.supervisorId : ''),
     };
     if (!id || JSON.stringify(s.slots) !== JSON.stringify(data.slots)) data.slotsAt = Date.now();
     data.status = data.remaining <= 0 ? 'expired' : d.status;
@@ -600,7 +614,7 @@ function schedule() {
   const view = schedCountry || S.adminCountry;
   const n = nowIn(view);
   const days = DAYS.map(() => []);
-  db.students.filter(isActive).filter(s => !schedTeacher || s.teacherId === schedTeacher)
+  VS().filter(isActive).filter(s => !schedTeacher || s.teacherId === schedTeacher)
     .forEach(st => slotsIn(st, view).forEach(x => days[x.day].push({ st, x })));
   days.forEach(d => d.sort((a, b) => slotMin(a.x) - slotMin(b.x)));
   return `
@@ -624,14 +638,14 @@ function pickLec(id) { lec.teacher = id; lec.student = ''; render(); setTimeout(
 function reports() {
   const C = S.adminCountry, nowM = nowIn(C).iso.slice(0, 7);
   if (!lec.month) lec.month = nowM;
-  const all = db.reports.map(r => ({ r, w: repWhen(r, C) }));
+  const all = db.reports.filter(r => !IS_SUP || VT().some(t => t.id === r.teacherId)).map(r => ({ r, w: repWhen(r, C) }));
   const months = [...new Set([nowM, ...all.map(x => x.w.iso.slice(0, 7))])].sort().reverse();
   const inMonth = lec.month === 'all' ? all : all.filter(x => x.w.iso.startsWith(lec.month));
   const now = Date.now();
 
   // ملخص كل المحفظين
   const q = lec.q.trim().toLowerCase();
-  let sum = db.teachers.filter(t => !q || t.name.toLowerCase().includes(q)).map(t => {
+  let sum = VT().filter(t => !q || t.name.toLowerCase().includes(q)).map(t => {
     const rs = inMonth.filter(x => x.r.teacherId === t.id);
     const p = rs.filter(x => x.r.attendance === 'present').length;
     const missed = lec.month === nowM ? teacherSessions(t.id, C, 31, 0).filter(o => !o.rec && o.ts < now && o.date.startsWith(nowM)).length : 0;
@@ -717,7 +731,7 @@ function adminUndo(id) {
 function exportLectures() {
   const C = S.adminCountry;
   const rows = [['التاريخ', 'الوقت', 'المحفظ', 'الطالب', 'الحضور', 'رقم المحاضرة', 'المتبقي']];
-  db.reports.filter(r => (!lec.teacher || r.teacherId === lec.teacher) && (!lec.student || r.studentId === lec.student))
+  db.reports.filter(r => (!IS_SUP || VT().some(t => t.id === r.teacherId)) && (!lec.teacher || r.teacherId === lec.teacher) && (!lec.student || r.studentId === lec.student))
     .map(r => ({ r, w: repWhen(r, C) })).filter(x => !lec.month || lec.month === 'all' || x.w.iso.startsWith(lec.month))
     .sort((a, b) => (a.r.sessionTs || a.r.createdAt) - (b.r.sessionTs || b.r.createdAt))
     .forEach(({ r, w }) => rows.push([w.iso, w.time, Store.teacher(r.teacherId)?.name || '', Store.student(r.studentId)?.name || '', ATT[r.attendance], r.lectureNo || '', r.remainingAfter]));

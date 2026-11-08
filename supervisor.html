@@ -11,8 +11,16 @@
   <aside class="side">
     <div class="brand">Qraan</div>
     <nav id="nav">
-      <button data-tab="groups" class="active">📨 تقارير الجروبات <span class="badge hidden" id="grpBadge"></span></button>
-      <button data-tab="stats">📊 المحفظين</button>
+      <button data-tab="dashboard" class="active">🏠 الرئيسية</button>
+      <button data-tab="assign">📅 الجدول والحصص</button>
+      <button data-tab="groups">📨 تقارير الجروبات <span class="badge hidden" id="grpBadge"></span></button>
+      <button data-tab="reports">📊 محاضرات المحفظين</button>
+      <button data-tab="teachers">👳 المحفظين</button>
+      <button data-tab="students">🎓 الطلاب</button>
+      <button data-tab="supervisors">👩‍💼 المشرفات</button>
+      <button data-tab="schedule">🗓️ الجدول العام</button>
+      <button data-tab="outbox">💬 رسائل واتساب <span class="badge hidden" id="outBadge"></span></button>
+      <button data-tab="settings">⚙️ الإعدادات</button>
       <button onclick="logout()">↩︎ خروج</button>
     </nav>
     <div class="foot" id="sideFoot"></div>
@@ -20,6 +28,6 @@
   <main class="main" id="main"></main>
 </div>
 <script src="core.js"></script>
-<script src="supervisor.js"></script>
+<script src="admin.js"></script>
 </body>
 </html>
