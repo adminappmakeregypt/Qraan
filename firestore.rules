@@ -4,34 +4,34 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/qraan_admins/$(request.auth.uid)); }
     function mine(d) { return signedIn() && d.teacherUid == request.auth.uid; }
 
     // إعداد أول مرة: يتم مرة واحدة فقط
-    match /config/setup {
+    match /qraan_config/setup {
       allow get: if true;
       allow create: if signedIn() && request.resource.data.adminUid == request.auth.uid;
       allow update, delete: if false;
     }
-    match /admins/{uid} {
+    match /qraan_admins/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
       allow create: if signedIn() && request.auth.uid == uid
-        && !exists(/databases/$(database)/documents/config/setup)
-        && getAfter(/databases/$(database)/documents/config/setup).data.adminUid == uid;
+        && !exists(/databases/$(database)/documents/qraan_config/setup)
+        && getAfter(/databases/$(database)/documents/qraan_config/setup).data.adminUid == uid;
       allow update, delete: if false;
     }
 
-    match /settings/{id} {
+    match /qraan_settings/{id} {
       allow read: if signedIn();
       allow write: if isAdmin();
     }
 
-    match /teachers/{id} {
+    match /qraan_teachers/{id} {
       allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
       allow write: if isAdmin();
     }
 
-    match /students/{id} {
+    match /qraan_students/{id} {
       allow read: if isAdmin() || mine(resource.data);
       allow create, delete: if isAdmin();
       // المحفظ يغيّر فقط عدادات الحضور والرصيد (± محاضرة واحدة في كل مرة)
@@ -41,17 +41,17 @@ service cloud.firestore {
         && request.resource.data.remaining <= resource.data.remaining + 1);
     }
 
-    match /reports/{id} {
+    match /qraan_reports/{id} {
       allow read: if isAdmin() || mine(resource.data);
       allow create: if isAdmin() || (mine(request.resource.data)
-        && get(/databases/$(database)/documents/students/$(request.resource.data.studentId)).data.teacherUid == request.auth.uid);
+        && get(/databases/$(database)/documents/qraan_students/$(request.resource.data.studentId)).data.teacherUid == request.auth.uid);
       allow update: if isAdmin();
       // المحفظ يقدر يتراجع خلال 24 ساعة فقط
       allow delete: if isAdmin() || (mine(resource.data) && request.time.toMillis() - resource.data.createdAt < 86400000);
     }
 
     // سجل البيانات: صفحة عامة — أي حد يقدر يرسل (إنشاء فقط)، والمدير بس اللي يقرأ ويعدّل
-    match /intake/{id} {
+    match /qraan_intake/{id} {
       allow create: if request.resource.data.keys().hasOnly(['id', 'createdAt', 'status', 'version', 'teacher', 'students'])
         && request.resource.data.id == id
         && request.resource.data.status == 'new'
@@ -63,7 +63,7 @@ service cloud.firestore {
       allow read, update, delete: if isAdmin();
     }
 
-    match /outbox/{id} {
+    match /qraan_outbox/{id} {
       allow read, update: if isAdmin();
       allow create: if isAdmin() || (signedIn() && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.kind in ['renew', 'eval'] && request.resource.data.status == 'pending');

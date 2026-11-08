@@ -165,7 +165,7 @@ async function submitAll() {
     teacher: { name: t.name.trim(), country: t.country, phone: t.phone.trim(), supervisor: t.supervisor.trim(), notes: t.notes.trim() },
     students: state.students.map(clean) };
   try {
-    await F.fs.collection('intake').doc(id).set(doc);
+    await F.fs.collection(P('intake')).doc(id).set(doc);
     clearDraft();
     sent = { name: doc.teacher.name, count: doc.students.length, ref: id.slice(-6).toUpperCase() };
     render(); scrollTo(0, 0);

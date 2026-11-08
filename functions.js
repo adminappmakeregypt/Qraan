@@ -20,7 +20,7 @@ const WA_PHONE_ID = defineSecret('WA_PHONE_ID');
 const opts = { region: REGION, secrets: [WA_TOKEN, WA_PHONE_ID] };
 
 async function send(ref, m) {
-  const s = (await getFirestore().doc('settings/main').get()).data() || {};
+  const s = (await getFirestore().doc('qraan_settings/main').get()).data() || {};
   if (s.waMode !== 'api') return;                       // الإرسال اليدوي مفعّل
   const fail = error => ref.update({ error, lastTry: Date.now() });
   if (!m.phone) return fail('رقم ولي الأمر غير مسجل');
@@ -52,7 +52,7 @@ async function send(ref, m) {
 }
 
 // رسالة جديدة (آخر محاضرة في الباقة / رسالة اختبار)
-exports.waOnCreate = onDocumentCreated({ document: 'outbox/{id}', ...opts }, async event => {
+exports.waOnCreate = onDocumentCreated({ document: 'qraan_outbox/{id}', ...opts }, async event => {
   const snap = event.data;
   if (!snap) return;
   const m = snap.data();
@@ -60,7 +60,7 @@ exports.waOnCreate = onDocumentCreated({ document: 'outbox/{id}', ...opts }, asy
 });
 
 // إعادة المحاولة من لوحة المدير
-exports.waOnRetry = onDocumentUpdated({ document: 'outbox/{id}', ...opts }, async event => {
+exports.waOnRetry = onDocumentUpdated({ document: 'qraan_outbox/{id}', ...opts }, async event => {
   const before = event.data.before.data(), after = event.data.after.data();
   if (after.status === 'pending' && after.retryAt && after.retryAt !== before.retryAt) await send(event.data.after.ref, after);
 });

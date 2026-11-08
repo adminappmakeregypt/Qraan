@@ -82,6 +82,8 @@ const defaultSettings = () => ({
 const defaultDB = () => ({ settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [] });
 
 /* ---------- Firebase ---------- */
+/** كل جداول Qraan تبدأ بـ qraan_ علشان ماتتلخبطش مع أي بيانات قديمة في نفس المشروع */
+const P = name => 'qraan_' + name;
 const FB = { app: null, auth: null, fs: null };
 function fbConfigured() { return !!(window.FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && !String(FIREBASE_CONFIG.apiKey).startsWith('PASTE')); }
 function fbInit() {
@@ -144,8 +146,8 @@ const Store = {
     this.role = role; this.uid = uid;
     const fs = FB.fs;
     const qs = role === 'admin'
-      ? { teachers: fs.collection('teachers'), students: fs.collection('students'), reports: fs.collection('reports'), outbox: fs.collection('outbox'), intake: fs.collection('intake') }
-      : { teachers: fs.collection('teachers').where('uid', '==', uid), students: fs.collection('students').where('teacherUid', '==', uid), reports: fs.collection('reports').where('teacherUid', '==', uid) };
+      ? { teachers: fs.collection(P('teachers')), students: fs.collection(P('students')), reports: fs.collection(P('reports')), outbox: fs.collection(P('outbox')), intake: fs.collection(P('intake')) }
+      : { teachers: fs.collection(P('teachers')).where('uid', '==', uid), students: fs.collection(P('students')).where('teacherUid', '==', uid), reports: fs.collection(P('reports')).where('teacherUid', '==', uid) };
     const listen = (ref, onData) => new Promise((res, rej) => {
       let first = true;
       this._subs.push(ref.onSnapshot(snap => { onData(snap); if (first) { first = false; res(); } else this._changed(); },
@@ -155,7 +157,7 @@ const Store = {
       this.db[c] = snap.docs.map(d => ({ ...d.data(), id: d.id }));
       this._last[c] = Object.fromEntries(this.db[c].map(x => [x.id, stable(x)]));
     }));
-    waits.push(listen(fs.doc('settings/main'), d => {
+    waits.push(listen(fs.doc(P('settings') + '/main'), d => {
       Object.assign(this.db.settings, defaultSettings(), d.data() || {});
       this._last.settings = stable(this.db.settings);
     }));
@@ -184,14 +186,14 @@ const Store = {
       for (const item of this.db[c]) {
         if (!item.id) item.id = uid();
         const str = stable(item); next[item.id] = str;
-        if (this._last[c][item.id] !== str) (c === 'outbox' ? ob : main).push(['set', fs.collection(c).doc(item.id), JSON.parse(str)]);
+        if (this._last[c][item.id] !== str) (c === 'outbox' ? ob : main).push(['set', fs.collection(P(c)).doc(item.id), JSON.parse(str)]);
       }
-      for (const id of Object.keys(this._last[c])) if (!(id in next)) (c === 'outbox' ? ob : main).push(['del', fs.collection(c).doc(id)]);
+      for (const id of Object.keys(this._last[c])) if (!(id in next)) (c === 'outbox' ? ob : main).push(['del', fs.collection(P(c)).doc(id)]);
       this._last[c] = next;
     }
     if (this.role === 'admin') {
       const st = stable(this.db.settings);
-      if (st !== this._last.settings) { main.push(['set', fs.doc('settings/main'), JSON.parse(st)]); this._last.settings = st; }
+      if (st !== this._last.settings) { main.push(['set', fs.doc(P('settings') + '/main'), JSON.parse(st)]); this._last.settings = st; }
     }
     const commit = async ops => {
       for (let i = 0; i < ops.length; i += 450) {
@@ -215,7 +217,7 @@ function boot(role) {
       if (!u) { location.href = 'index.html'; return; }
       if (started) return; started = true;
       try {
-        if (role === 'admin' && !(await F.fs.doc('admins/' + u.uid).get()).exists) throw new Error('not admin');
+        if (role === 'admin' && !(await F.fs.doc(P('admins') + '/' + u.uid).get()).exists) throw new Error('not admin');
         await Store.start(role, u.uid);
         if (role === 'teacher') { const t = Store.db.teachers[0]; if (!t || t.active === false) throw new Error('inactive'); }
         resolve(u);

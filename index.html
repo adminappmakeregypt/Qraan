@@ -74,8 +74,8 @@
   async function route(u) {
     if (routing) return; routing = true;
     try {
-      if ((await F.fs.doc('admins/' + u.uid).get()).exists) return location.href = 'admin.html';
-      const t = await F.fs.collection('teachers').where('uid', '==', u.uid).get();
+      if ((await F.fs.doc(P('admins') + '/' + u.uid).get()).exists) return location.href = 'admin.html';
+      const t = await F.fs.collection(P('teachers')).where('uid', '==', u.uid).get();
       if (!t.empty && t.docs[0].data().active !== false) return location.href = 'teacher.html';
       await F.auth.signOut(); toast(t.empty ? 'الحساب غير مرتبط بمحفظ' : 'الحساب موقوف — تواصل مع الإدارة', true);
     } catch (e) { console.error(e); await F.auth.signOut(); toast(errMsg(e), true); }
@@ -84,7 +84,7 @@
   async function showForms() {
     $('#loading').classList.add('hidden');
     let setupDone = true;
-    try { setupDone = (await F.fs.doc('config/setup').get()).exists; } catch (e) { console.error(e); }
+    try { setupDone = (await F.fs.doc(P('config') + '/setup').get()).exists; } catch (e) { console.error(e); }
     $('#setupForm').classList.toggle('hidden', setupDone);
     $('#loginBox').classList.toggle('hidden', !setupDone);
   }
@@ -104,12 +104,18 @@
     e.preventDefault(); busy(e.target, true);
     const f = Object.fromEntries(new FormData(e.target));
     try {
-      const u = (await F.auth.createUserWithEmailAndPassword(f.email.trim(), f.password)).user;
+      let u;
+      try { u = (await F.auth.createUserWithEmailAndPassword(f.email.trim(), f.password)).user; }
+      catch (err) {   // الإيميل متسجل قبل كده (من نسخة قديمة) ← ندخل بيه بنفس كلمة المرور
+        if (err.code !== 'auth/email-already-in-use') throw err;
+        try { u = (await F.auth.signInWithEmailAndPassword(f.email.trim(), f.password)).user; }
+        catch (e2) { throw { code: 'x', message: 'الإيميل ده متسجل قبل كده بكلمة مرور مختلفة — اكتب كلمة المرور القديمة، أو استخدم «نسيت كلمة المرور» من صفحة الدخول' }; }
+      }
       const b = F.fs.batch();
-      b.set(F.fs.doc('config/setup'), { adminUid: u.uid, at: Date.now() });
-      b.set(F.fs.doc('admins/' + u.uid), { email: u.email, at: Date.now() });
+      b.set(F.fs.doc(P('config') + '/setup'), { adminUid: u.uid, at: Date.now() });
+      b.set(F.fs.doc(P('admins') + '/' + u.uid), { email: u.email, at: Date.now() });
       await b.commit();
-      await F.fs.doc('settings/main').set({ ...defaultSettings(), academy: f.academy.trim(), whatsapp: f.whatsapp.trim(), adminCountry: f.adminCountry });
+      await F.fs.doc(P('settings') + '/main').set({ ...defaultSettings(), academy: f.academy.trim(), whatsapp: f.whatsapp.trim(), adminCountry: f.adminCountry });
       location.href = 'admin.html';
     } catch (err) { console.error(err); toast(errMsg(err), true); busy(e.target, false); }
   };
