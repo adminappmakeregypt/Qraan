@@ -2,13 +2,10 @@
 'use strict';
 
 // نفس اللوحة للمدير وللمشرفة — المشرفة تشوف وتعدل المحفظين والطلاب التابعين لها بس
-const SES = Session.get();
-const db = Store.load();
+const db = Store.db;
 const S = db.settings;
-const IS_SUP = SES?.role === 'supervisor';
-const ME = IS_SUP ? Store.supervisor(SES.id) : null;
-if (IS_SUP ? (!ME || ME.active === false || !location.pathname.endsWith('supervisor.html')) : (SES?.role !== 'admin' || location.pathname.endsWith('supervisor.html'))) { Session.clear(); location.href = 'index.html'; }
-window.WHO = IS_SUP ? { role: 'supervisor', id: ME?.id, name: ME?.name } : { role: 'admin', id: 'admin', name: 'المدير' };
+const IS_SUP = location.pathname.endsWith('supervisor.html');
+let ME = null;   // المشرفة الحالية (بعد تحميل البيانات)
 /** المحفظين والطلاب الظاهرين (للمشرفة: التابعين لها فقط) */
 const VT = () => IS_SUP ? db.teachers.filter(t => t.supervisorId === ME.id) : db.teachers;
 const VS = () => IS_SUP ? db.students.filter(s => effSupervisorId(s) === ME.id) : db.students;
@@ -22,6 +19,7 @@ if (IS_SUP) {
   $$('#nav button[data-tab]').forEach(b => { if (ADMIN_ONLY.includes(b.dataset.tab)) b.remove(); });
   $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === current));
 }
+const editing = () => $('#modal') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
 
 function go(tab) {
   if (IS_SUP && ADMIN_ONLY.includes(tab)) return;
@@ -35,7 +33,7 @@ function render() {
   $('#outBadge')?.classList.toggle('hidden', !pending); if ($('#outBadge')) $('#outBadge').textContent = pending;
   const gr = groupReports().filter(r => grpScope(r) && r.group.status !== 'sent').length;
   $('#grpBadge').textContent = gr; $('#grpBadge').classList.toggle('hidden', !gr);
-  $('#sideFoot').innerHTML = IS_SUP ? `${esc(ME.name)}<br>${esc(S.academy)}` : `${esc(S.academy)}<br>${esc(S.adminEmail)}`;
+  $('#sideFoot').innerHTML = IS_SUP ? `${esc(ME.name)}<br>${esc(S.academy)}` : `${esc(S.academy)}<br><span dir="ltr">${esc(Store.profile?.email || '')}</span>`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
 const teacherName = id => esc(Store.teacher(id)?.name || '— بدون محفظ —');
@@ -349,7 +347,7 @@ function teacherForm(id, presetSup) {
     <form id="tf">
       <div class="field"><label>الاسم</label><input name="name" required value="${esc(t.name)}"></div>
       <div class="row">
-        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(t.username)}"></div>
+        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(t.username)}" ${t.uid ? 'readonly title="لا يمكن تغييره بعد إنشاء الحساب"' : ''}></div>
         <div class="field"><label>رقم الدخول (بدون كلمة سر)</label><input name="code" required inputmode="numeric" pattern="[0-9]{3,10}" value="${esc(t.code)}"></div>
       </div>
       <div class="row">
@@ -405,7 +403,7 @@ function supervisorForm(id) {
     <form id="uf">
       <div class="field"><label>الاسم</label><input name="name" required value="${esc(u.name)}"></div>
       <div class="row">
-        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(u.username)}"></div>
+        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(u.username)}" ${u.uid ? 'readonly title="لا يمكن تغييره بعد إنشاء الحساب"' : ''}></div>
         <div class="field"><label>رقم الدخول</label><input name="code" required inputmode="numeric" pattern="[0-9]{3,10}" value="${esc(u.code)}"></div>
       </div>
       <div class="field"><label>الهاتف</label><input name="phone" dir="ltr" value="${esc(u.phone)}"></div>
@@ -834,16 +832,18 @@ function settings() {
   </form>
   <form id="pwf" class="card">
     <h3>بيانات دخول المدير</h3>
+    <p class="muted small">البريد: <b dir="ltr">${esc(Store.profile?.email || '')}</b></p>
     <div class="row">
-      <div class="field"><label>البريد الإلكتروني</label><input name="email" type="email" value="${esc(S.adminEmail)}" required></div>
-      <div class="field"><label>كلمة المرور الحالية</label><input name="old" type="password" required></div>
+      <div class="field"><label>كلمة المرور الحالية</label><input name="old" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label>كلمة المرور الجديدة</label><input name="pw" type="password" minlength="6" required autocomplete="new-password"></div>
     </div>
-    <div class="field"><label>كلمة المرور الجديدة (اتركها فارغة لعدم التغيير)</label><input name="pw" type="password" minlength="6"></div>
-    <button class="btn">تحديث</button>
+    <button class="btn">تغيير كلمة المرور</button>
   </form>
   <div class="card">
     <h3>النسخ الاحتياطي</h3>
-    <p class="muted small">البيانات محفوظة في هذا المتصفح. خذ نسخة احتياطية بانتظام.</p>
+    <p class="muted small">البيانات محفوظة على Firebase ومتزامنة بين كل الأجهزة. خذ نسخة احتياطية بانتظام.</p>
+    ${hasLocalData() ? `<div class="note">📦 فيه بيانات قديمة محفوظة في المتصفح ده (من قبل Firebase): ${localSummary()}<br>
+      <button class="btn gold sm" style="margin-top:6px" onclick="migrateLocal()">نقلها إلى Firebase</button></div>` : ''}
     <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn ghost" onclick="exportData()">⬇️ تصدير نسخة (JSON)</button>
       <label class="btn ghost" style="margin:0">⬆️ استيراد نسخة<input type="file" accept=".json" hidden onchange="importData(this.files[0])"></label>
@@ -875,10 +875,11 @@ document.addEventListener('submit', async e => {
   if (e.target.id === 'pwf') {
     e.preventDefault();
     const d = Object.fromEntries(new FormData(e.target));
-    if (await sha256(d.old) !== S.adminHash) return toast('كلمة المرور الحالية غير صحيحة', true);
-    S.adminEmail = d.email.trim().toLowerCase();
-    if (d.pw) S.adminHash = await sha256(d.pw);
-    Store.save(); toast('تم التحديث'); render();
+    try {
+      const u = FB.auth.currentUser;
+      await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, d.old));
+      await u.updatePassword(d.pw); toast('تم تغيير كلمة المرور ✅'); render();
+    } catch (err) { toast(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' ? 'كلمة المرور الحالية غير صحيحة' : errMsg(err), true); }
   }
 });
 
@@ -898,6 +899,23 @@ function exportData() {
   a.href = URL.createObjectURL(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }));
   a.download = `qraan-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
 }
+/** دمج بيانات (نسخة JSON أو بيانات المتصفح القديمة) في Firebase — حسابات المحفظين والمشرفات تتعمل تلقائيًا */
+function mergeData(d) {
+  let n = 0;
+  COLS.forEach(col => (d[col] || []).forEach(o => {
+    if (!o?.id) return;
+    const copy = { ...o }; delete copy.uid; delete copy.authEmail;   // الحساب يتعمل من جديد في المشروع ده
+    const i = db[col].findIndex(x => x.id === o.id);
+    if (i >= 0) { if (db[col][i].uid) { copy.uid = db[col][i].uid; copy.authEmail = db[col][i].authEmail; } Object.assign(db[col][i], copy); } else db[col].push(copy);
+    n++;
+  }));
+  if (d.settings) {
+    const keep = { ...d.settings }; ['adminHash', 'adminEmail', 'msgV2'].forEach(k => delete keep[k]);
+    Object.assign(S, keep);
+  }
+  Store.save();
+  return n;
+}
 function importData(file) {
   if (!file) return;
   const r = new FileReader();
@@ -905,15 +923,29 @@ function importData(file) {
     try {
       const d = JSON.parse(r.result);
       if (!d.settings || !Array.isArray(d.students)) throw 0;
-      if (!confirmBox('سيتم استبدال كل البيانات الحالية. متابعة؟')) return;
-      localStorage.setItem(DB_KEY, JSON.stringify(d)); location.reload();
+      if (!confirmBox('دمج بيانات الملف مع البيانات الحالية؟ (العناصر بنفس المعرّف هتتحدث)')) return;
+      const n = mergeData(d); toast(`تم استيراد ${n} عنصر — جارٍ إنشاء حسابات الدخول...`); render();
     } catch { toast('ملف غير صالح', true); }
   };
   r.readAsText(file);
 }
+function localData() { try { return JSON.parse(localStorage.getItem(DB_KEY)); } catch { return null; } }
+const hasLocalData = () => { const d = localData(); return !!(d && (d.teachers?.length || d.students?.length)); };
+const localSummary = () => { const d = localData(); return `${d.teachers?.length || 0} محفظ، ${d.supervisors?.length || 0} مشرفة، ${d.students?.length || 0} طالب، ${d.reports?.length || 0} محاضرة`; };
+async function migrateLocal() {
+  const d = localData(); if (!d) return;
+  if (!confirmBox(`نقل البيانات القديمة (${localSummary()}) إلى Firebase؟`)) return;
+  const n = mergeData(d); render();
+  toast(`جارٍ نقل ${n} عنصر وإنشاء حسابات الدخول — استنى لحد ما تخلص...`);
+  await Store._pending;
+  localStorage.setItem(DB_KEY + '_migrated', localStorage.getItem(DB_KEY)); localStorage.removeItem(DB_KEY);
+  toast('تم النقل إلى Firebase ✅ — المحفظين والمشرفات يدخلوا بنفس اسم المستخدم والرقم'); render();
+}
 function resetAll() {
-  if (!confirmBox('سيتم حذف كل البيانات نهائيًا بما فيها حساب المدير. متابعة؟')) return;
-  localStorage.removeItem(DB_KEY); logout();
+  if (!confirmBox('سيتم حذف كل المحفظين والمشرفات والطلاب والمحاضرات والرسائل نهائيًا من Firebase. متابعة؟')) return;
+  if (!confirmBox('تأكيد أخير: الحذف لا يمكن التراجع عنه. حذف كل البيانات؟')) return;
+  COLS.forEach(c => { db[c] = []; });
+  Store.save(); toast('جارٍ حذف البيانات...'); render();
 }
 function loadDemo() {
   if (db.students.length && !confirmBox('سيتم إضافة بيانات تجريبية إلى بياناتك الحالية. متابعة؟')) return;
@@ -935,4 +967,11 @@ function loadDemo() {
   Store.save(); toast('تمت إضافة البيانات التجريبية'); go('students');
 }
 
-render();
+boot(IS_SUP ? 'supervisor' : 'admin').then(p => {
+  if (IS_SUP) ME = Store.supervisor(p.id);
+  window.WHO = IS_SUP ? { role: 'supervisor', id: ME.id, name: ME.name } : { role: 'admin', id: 'admin', name: 'المدير' };
+  let pend = false;   // تحديث مباشر لما حد تاني يغيّر البيانات (بدون ما نقاطع كتابة أو نافذة مفتوحة)
+  Store.onChange = () => { if (editing()) pend = true; else render(); };
+  setInterval(() => { if (pend && !editing()) { pend = false; render(); } }, 1500);
+  render();
+}).catch(() => {});

@@ -1,8 +1,7 @@
 /* ===================== Qraan — النواة المشتركة ===================== */
 'use strict';
 
-const DB_KEY = 'qraan_db_v1';
-const SESSION_KEY = 'qraan_session';
+const DB_KEY = 'qraan_db_v1';   // البيانات القديمة في المتصفح (للنقل إلى Firebase فقط)
 
 const COUNTRIES = {
   EG: { name: 'مصر',      tz: 'Africa/Cairo', code: '20',  flag: '🇪🇬' },
@@ -113,28 +112,160 @@ const defaultSettings = () => ({
 
 const defaultDB = () => ({ settings: defaultSettings(), teachers: [], supervisors: [], students: [], reports: [], outbox: [] });
 
-/* ---------- التخزين ---------- */
+/* ---------- التخزين: Firebase (Firestore + Authentication) ---------- */
+const COLS = ['teachers', 'supervisors', 'students', 'reports', 'outbox'];
+const SECRET_KEYS = ['waToken', 'waPhoneId', 'waProxy', 'waTemplate', 'waLang', 'waVersion', 'waMode'];
+const WRITABLE = { admin: COLS, supervisor: ['teachers', 'students', 'reports', 'outbox'], teacher: ['students', 'reports', 'outbox'] };
+const FB = { app: null, auth: null, fs: null, app2: null };
+
+function fbInit() {
+  if (FB.app) return true;
+  if (!window.firebase || !window.FIREBASE_CONFIG) return false;
+  FB.app = firebase.initializeApp(window.FIREBASE_CONFIG);
+  FB.auth = firebase.auth(); FB.fs = firebase.firestore();
+  try { FB.fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
+  return true;
+}
+/** تطبيق ثانوي لإنشاء حسابات المحفظين/المشرفات بدون تسجيل خروج المدير */
+const fb2 = () => FB.app2 || (FB.app2 = firebase.initializeApp(window.FIREBASE_CONFIG, 'accounts'));
+const clean = o => JSON.parse(JSON.stringify(o ?? null));
+
+/* حسابات الدخول: اسم المستخدم + الرقم ← حساب Firebase (بريد داخلي + كلمة مرور مشتقة) */
+const pwOf = code => `qraan#${String(code).trim()}#key`;
+async function emailOf(username) { return 'u' + (await sha256('qraan:' + String(username).trim().toLowerCase())).slice(0, 32) + '@users.qraan.app'; }
+const AUTH_ERR = {
+  'auth/email-already-in-use': 'اسم المستخدم مستخدم بالفعل', 'auth/invalid-credential': 'اسم المستخدم أو الرقم غير صحيح',
+  'auth/wrong-password': 'البيانات غير صحيحة', 'auth/user-not-found': 'الحساب غير موجود', 'auth/invalid-email': 'البريد غير صحيح',
+  'auth/too-many-requests': 'محاولات كثيرة — حاول بعد دقائق', 'auth/network-request-failed': 'لا يوجد اتصال بالإنترنت',
+  'auth/weak-password': 'كلمة المرور ضعيفة (6 أحرف على الأقل)', 'permission-denied': 'ليس لديك صلاحية لهذا الإجراء',
+};
+const errMsg = e => AUTH_ERR[e?.code] || e?.message || String(e);
+
+/** إنشاء حساب دخول لمحفظ/مشرفة أو تحديث رقمه */
+async function ensureAccount(kind, obj, oldCode) {
+  const a2 = fb2().auth();
+  if (!obj.uid) {
+    const email = await emailOf(obj.username);
+    let cred;
+    try { cred = await a2.createUserWithEmailAndPassword(email, pwOf(obj.code)); }
+    catch (e) { if (e.code === 'auth/email-already-in-use') cred = await a2.signInWithEmailAndPassword(email, pwOf(obj.code)); else throw e; }
+    const uid = cred.user.uid;
+    await a2.signOut();
+    await FB.fs.collection('users').doc(uid).set({ role: kind, ref: obj.id });
+    return { uid, authEmail: email };
+  }
+  if (oldCode != null && String(oldCode) !== String(obj.code)) {
+    const cred = await a2.signInWithEmailAndPassword(obj.authEmail, pwOf(oldCode));
+    await cred.user.updatePassword(pwOf(obj.code)); await a2.signOut();
+  }
+  return null;
+}
+async function deleteAccount(obj) {
+  if (!obj?.uid) return;
+  try { await FB.fs.collection('users').doc(obj.uid).delete(); } catch (e) {}
+  try { const a2 = fb2().auth(); const c = await a2.signInWithEmailAndPassword(obj.authEmail, pwOf(obj.code)); await c.user.delete(); } catch (e) {}
+}
+
 const Store = {
-  db: null,
-  load() {
-    try { this.db = JSON.parse(localStorage.getItem(DB_KEY)); } catch (e) { this.db = null; }
-    if (!this.db) this.db = defaultDB();
-    this.db.settings = { ...defaultSettings(), ...this.db.settings };
-    ['teachers', 'supervisors', 'students', 'reports', 'outbox'].forEach(k => { this.db[k] = this.db[k] || []; });
-    if (!this.db.settings.msgV2) {   // إلغاء كل الرسائل القديمة — الإبقاء على رسائل انتهاء الباقة فقط
-      this.db.outbox = this.db.outbox.filter(m => m.kind === 'renew' && m.status === 'sent');
-      this.db.settings.msgV2 = true; this.save();
-    }
-    return this.db;
-  },
-  save() { localStorage.setItem(DB_KEY, JSON.stringify(this.db)); },
+  db: defaultDB(), profile: null, onChange: null, _last: {}, _lastSettings: {}, _busy: 0,
+  load() { return this.db; },
   teacher(id) { return this.db.teachers.find(t => t.id === id); },
   student(id) { return this.db.students.find(s => s.id === id); },
   supervisor(id) { return this.db.supervisors.find(s => s.id === id); },
+
+  /** تطبيق بيانات من السيرفر مع الحفاظ على نفس الكائنات (المراجع في الصفحات تفضل صحيحة) */
+  _apply(col, docs) {
+    const old = new Map(this.db[col].map(o => [o.id, o])), out = [];
+    this._last[col] = new Map();
+    docs.forEach(d => {
+      const data = { ...d.data, id: d.id };
+      this._last[col].set(d.id, JSON.stringify(clean(data)));
+      const o = old.get(d.id);
+      if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, data); out.push(o); } else out.push(data);
+    });
+    this.db[col] = out;
+  },
+  _applySettings(main, secret) {
+    const merged = { ...defaultSettings(), ...(main || {}), ...(secret || {}) };
+    Object.keys(this.db.settings).forEach(k => delete this.db.settings[k]);
+    Object.assign(this.db.settings, merged);
+    this._lastSettings = JSON.stringify(clean(this.db.settings));
+  },
+  /** بيانات مشتقة تُحفظ مع المستندات لتطبيق صلاحيات المشرفة */
+  _denorm() {
+    const role = this.profile?.role;
+    if (role === 'teacher') return;
+    this.db.teachers.forEach(t => {
+      const n = Store.supervisor(t.supervisorId)?.name;
+      if (!t.supervisorId) t.supervisorName = ''; else if (n) t.supervisorName = n;
+    });
+    this.db.students.forEach(st => { st.supId = effSupervisorId(st); });
+    if (role === 'admin') this.db.reports.forEach(r => { const st = Store.student(r.studentId); if (st) r.supId = st.supId; });
+  },
+
+  /** حفظ: يكتب المستندات المتغيرة فقط على Firebase (الكتابة تظهر فورًا والمزامنة في الخلفية) */
+  save() {
+    const role = this.profile?.role;
+    if (!role || !FB.fs) return;
+    this._denorm();
+    const ops = [], acc = [];
+    for (const col of WRITABLE[role]) {
+      const last = this._last[col] || new Map(), cur = new Map(this.db[col].map(o => [o.id, o]));
+      for (const [id, o] of cur) {
+        const j = JSON.stringify(clean(o));
+        if (last.get(id) !== j) {
+          ops.push({ col, id, data: clean(o) });
+          if ((col === 'teachers' || col === 'supervisors')) {
+            const prev = last.has(id) ? JSON.parse(last.get(id)) : null;
+            if (!o.uid || (prev && String(prev.code) !== String(o.code))) acc.push({ kind: col === 'teachers' ? 'teacher' : 'supervisor', id, oldCode: prev?.code });
+          }
+          last.set(id, j);
+        }
+      }
+      for (const id of [...last.keys()]) if (!cur.has(id)) {
+        ops.push({ col, id, del: true });
+        if (col === 'teachers' || col === 'supervisors') acc.push({ del: true, obj: JSON.parse(last.get(id)) });
+        last.delete(id);
+      }
+      this._last[col] = last;
+    }
+    if (role === 'admin') {
+      const j = JSON.stringify(clean(this.db.settings));
+      if (j !== this._lastSettings) {
+        const all = clean(this.db.settings), main = {}, secret = {};
+        Object.entries(all).forEach(([k, v]) => (SECRET_KEYS.includes(k) ? secret : main)[k] = v);
+        delete main.adminHash; delete main.adminEmail;
+        ops.push({ col: 'settings', id: 'main', data: main }, { col: 'settings', id: 'secret', data: secret });
+        ops.push({ col: 'meta', id: 'public', data: { academy: main.academy || 'Qraan' } });
+        this._lastSettings = j;
+      }
+    }
+    if (!ops.length && !acc.length) return;
+    this._busy++;
+    const run = async () => {
+      for (let i = 0; i < ops.length; i += 400) {
+        const b = FB.fs.batch();
+        ops.slice(i, i + 400).forEach(op => { const ref = FB.fs.collection(op.col).doc(op.id); op.del ? b.delete(ref) : b.set(ref, op.data); });
+        await b.commit();
+      }
+      for (const a of acc) {
+        if (a.del) { await deleteAccount(a.obj); continue; }
+        const col = a.kind === 'teacher' ? 'teachers' : 'supervisors', o = this.db[col].find(x => x.id === a.id);
+        if (!o) continue;
+        try {
+          const r = await ensureAccount(a.kind, o, a.oldCode);
+          if (r) { Object.assign(o, r); await FB.fs.collection(col).doc(o.id).update(r); this._last[col].set(o.id, JSON.stringify(clean(o))); }
+        } catch (e) { toast(`تعذر إنشاء/تحديث حساب دخول «${o.name}»: ${errMsg(e)}`, true); }
+      }
+    };
+    this._pending = run().catch(e => { toast('لم يتم الحفظ على السيرفر: ' + errMsg(e), true); console.error(e); })
+      .finally(() => { this._busy--; });
+    return this._pending;
+  },
 };
 /** المشرفة الفعلية للطالب: المحددة له، وإلا مشرفة محفظه — أي تغيير في المحفظ ينعكس على كل طلابه */
 const effSupervisorId = st => (st && (st.supervisorId || Store.teacher(st.teacherId)?.supervisorId)) || '';
-const supervisorName = id => Store.supervisor(id)?.name || '';
+const supervisorName = id => Store.supervisor(id)?.name || Store.db.teachers.find(t => t.supervisorId === id)?.supervisorName || '';
 const supervisorOptions = (sel, empty = '— بدون مشرفة —') => `<option value="">${empty}</option>` +
   Store.db.supervisors.map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(u.name)}${u.active === false ? ' (موقوفة)' : ''}</option>`).join('');
 /** اسم المستخدم محجوز (محفظ أو مشرفة) */
@@ -143,13 +274,62 @@ function usernameTaken(uname, exceptId) {
   return [...Store.db.teachers, ...Store.db.supervisors].some(x => x.id !== exceptId && String(x.username).toLowerCase() === u);
 }
 
-/* ---------- الجلسة ---------- */
-const Session = {
-  get() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch (e) { return null; } },
-  set(v) { sessionStorage.setItem(SESSION_KEY, JSON.stringify(v)); },
-  clear() { sessionStorage.removeItem(SESSION_KEY); },
-};
-function logout() { Session.clear(); location.href = 'index.html'; }
+/* ---------- الجلسة والدخول ---------- */
+const Session = { get: () => Store.profile, set() {}, clear() {} };
+const PAGE = { admin: 'admin.html', supervisor: 'supervisor.html', teacher: 'teacher.html' };
+async function logout() { try { await FB.auth?.signOut(); } catch (e) {} location.href = 'index.html'; }
+
+/** من هو المستخدم الحالي؟ مدير (meta/owner) أو محفظ/مشرفة (users/uid) */
+async function resolveProfile(user) {
+  const own = await FB.fs.collection('meta').doc('owner').get();
+  if (own.exists && own.data().uid === user.uid) return { role: 'admin', id: 'admin', email: user.email };
+  const u = await FB.fs.collection('users').doc(user.uid).get();
+  return u.exists ? { role: u.data().role, id: u.data().ref } : null;
+}
+const authUser = () => new Promise(res => { const off = FB.auth.onAuthStateChanged(u => { off(); res(u); }); });
+
+function fatal(html) { document.body.innerHTML = `<div class="auth-wrap"><div class="auth-card">${html}</div></div>`; }
+
+/** تشغيل الصفحة: يتحقق من الدخول ثم يربط البيانات المباشرة حسب الدور */
+async function boot(role) {
+  if (!fbInit()) { fatal('<h3>تعذر تحميل Firebase</h3><p class="muted">تأكد من الاتصال بالإنترنت ومن ملف <code>firebase-config.js</code>.</p>'); throw new Error('no firebase'); }
+  document.body.classList.add('loading');
+  const user = await authUser();
+  if (!user) { location.href = 'index.html'; throw new Error('no user'); }
+  let p;
+  try { p = await resolveProfile(user); } catch (e) { fatal(`<h3>تعذر الاتصال</h3><p class="muted">${esc(errMsg(e))}</p><button class="btn" onclick="location.reload()">إعادة المحاولة</button>`); throw e; }
+  if (!p) { await FB.auth.signOut(); location.href = 'index.html'; throw new Error('no profile'); }
+  if (p.role !== role) { location.href = PAGE[p.role]; throw new Error('wrong page'); }
+  Store.profile = p;
+  const fs = FB.fs, listeners = [];
+  const q = {
+    admin: { teachers: fs.collection('teachers'), supervisors: fs.collection('supervisors'), students: fs.collection('students'), reports: fs.collection('reports'), outbox: fs.collection('outbox') },
+    supervisor: { supervisors: fs.collection('supervisors').doc(p.id), teachers: fs.collection('teachers').where('supervisorId', '==', p.id),
+      students: fs.collection('students').where('supId', '==', p.id), reports: fs.collection('reports').where('supId', '==', p.id) },
+    teacher: { teachers: fs.collection('teachers').doc(p.id), students: fs.collection('students').where('teacherId', '==', p.id),
+      reports: fs.collection('reports').where('teacherId', '==', p.id), outbox: fs.collection('outbox').where('teacherId', '==', p.id) },
+  }[role];
+  let main = null, secret = null;
+  const waits = [];
+  const notify = () => { if (Store._ready && Store.onChange) Store.onChange(); };
+  const listen = (ref, onData) => waits.push(new Promise((res, rej) => {
+    let first = true;
+    listeners.push(ref.onSnapshot({ includeMetadataChanges: false }, snap => { onData(snap); if (first) { first = false; res(); } else notify(); },
+      err => { if (first) rej(err); else toast('انقطع الاتصال بالبيانات: ' + errMsg(err), true); }));
+  }));
+  for (const [col, ref] of Object.entries(q)) {
+    listen(ref, snap => Store._apply(col, snap.docs ? snap.docs.map(d => ({ id: d.id, data: d.data() })) : (snap.exists ? [{ id: snap.id, data: snap.data() }] : [])));
+  }
+  listen(fs.collection('settings').doc('main'), d => { main = d.exists ? d.data() : null; Store._applySettings(main, secret); });
+  if (role === 'admin') listen(fs.collection('settings').doc('secret'), d => { secret = d.exists ? d.data() : null; Store._applySettings(main, secret); });
+  try { await Promise.all(waits); }
+  catch (e) { fatal(`<h3>تعذر تحميل البيانات</h3><p class="muted">${esc(errMsg(e))}</p><button class="btn" onclick="logout()">خروج</button>`); throw e; }
+  const meDoc = role === 'teacher' ? Store.teacher(p.id) : role === 'supervisor' ? Store.supervisor(p.id) : true;
+  if (!meDoc || meDoc.active === false) { await FB.auth.signOut(); alert('الحساب موقوف أو محذوف — تواصل مع الإدارة'); location.href = 'index.html'; throw new Error('inactive'); }
+  Store._ready = true;
+  document.body.classList.remove('loading');
+  return p;
+}
 
 /* ---------- أدوات عامة ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -258,7 +438,7 @@ function msgVars(st, extra = {}) {
 
 function queueMessage(kind, st, text) {
   const m = {
-    id: uid(), kind, studentId: st.id, studentName: st.name, teacherId: st.teacherId,
+    id: uid(), kind, studentId: st.id, studentName: st.name, teacherId: st.teacherId, supId: effSupervisorId(st),
     phone: normPhone(st.parentPhone, st.country), text, createdAt: Date.now(), status: 'pending',
   };
   Store.db.outbox.push(m);
@@ -321,6 +501,7 @@ function recordSession(st, teacher, occ, attendance, report = null) {
   const rep = {
     id: uid(), studentId: st.id, teacherId: teacher.id, createdAt: Date.now(), slotKey: occ.key, sessionTs: occ.ts,
     date: occ.date, time: occ.time, attendance, counted, lectureNo, remainingAfter: st.remaining, wasStatus, msgIds: [],
+    supId: effSupervisorId(st),
   };
   Store.db.reports.push(rep);
   if (attendance === 'present' && report) setGroupReport(rep, report);
@@ -596,7 +777,7 @@ async function apiSend(m) {
 }
 /** تسليم الرسالة: تلقائي لو API مفعّل، وإلا تبقى في الانتظار للإرسال اليدوي */
 async function deliver(m) {
-  if (Store.db.settings.waMode !== 'api') return 'manual';
+  if (Store.profile?.role !== 'admin' || Store.db.settings.waMode !== 'api') return 'manual';   // التوكن عند الإدارة فقط
   try {
     const r = await apiSend(m);
     m.status = 'sent'; m.sentAt = Date.now(); m.via = 'api'; m.waId = r?.messages?.[0]?.id || ''; delete m.error;

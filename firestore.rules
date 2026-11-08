@@ -1,0 +1,115 @@
+rules_version = '2';
+// ===== Qraan — قواعد حماية Firestore =====
+// المدير: كل البيانات. المشرفة: محفظينها وطلابها وتقاريرهم. المحفظ: طلابه ومحاضراته بس.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/meta/owner)
+        && get(/databases/$(database)/documents/meta/owner).data.uid == request.auth.uid;
+    }
+    function hasProfile() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function me() { return profile().ref; }
+    // الحساب الموقوف (active = false) يفقد الصلاحيات
+    function isSup() {
+      return hasProfile() && profile().role == 'supervisor'
+        && get(/databases/$(database)/documents/supervisors/$(profile().ref)).data.get('active', true) != false;
+    }
+    function isTeacher() {
+      return hasProfile() && profile().role == 'teacher'
+        && get(/databases/$(database)/documents/teachers/$(profile().ref)).data.get('active', true) != false;
+    }
+    function groupStatus(d) { return d.get('group', {}).get('status', ''); }
+
+    // ---- المدير (أول حساب يتعمل بس) + اسم الأكاديمية لصفحة الدخول ----
+    match /meta/owner {
+      allow read: if true;
+      allow create: if signedIn() && !exists(/databases/$(database)/documents/meta/owner)
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+    match /meta/public {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // ---- الإعدادات: العامة للكل، والسرية (توكن واتساب) للمدير بس ----
+    match /settings/main {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /settings/secret {
+      allow read, write: if isAdmin();
+    }
+
+    // ---- ربط حساب الدخول بالمحفظ/المشرفة ----
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create, update: if isAdmin()
+        || (isSup() && request.resource.data.role == 'teacher'
+            && get(/databases/$(database)/documents/teachers/$(request.resource.data.ref)).data.supervisorId == me());
+      allow delete: if isAdmin();
+    }
+
+    // ---- المشرفات ----
+    match /supervisors/{id} {
+      allow read: if isAdmin() || (isSup() && me() == id);
+      allow write: if isAdmin();
+    }
+
+    // ---- المحفظين ----
+    match /teachers/{id} {
+      allow read: if isAdmin()
+        || (isSup() && resource.data.supervisorId == me())
+        || (hasProfile() && profile().role == 'teacher' && me() == id);
+      allow create: if isAdmin() || (isSup() && request.resource.data.supervisorId == me());
+      allow update: if isAdmin()
+        || (isSup() && resource.data.supervisorId == me() && request.resource.data.supervisorId == me());
+      allow delete: if isAdmin();
+    }
+
+    // ---- الطلاب (supId = المشرفة الفعلية للطالب) ----
+    match /students/{id} {
+      allow read: if isAdmin()
+        || (isSup() && resource.data.supId == me())
+        || (isTeacher() && resource.data.teacherId == me());
+      allow create: if isAdmin() || (isSup() && request.resource.data.supId == me());
+      allow update: if isAdmin()
+        || (isSup() && resource.data.supId == me() && request.resource.data.supId == me())
+        || (isTeacher() && resource.data.teacherId == me()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['remaining', 'attended', 'absent', 'excused', 'status', 'expiredAt']));
+      allow delete: if isAdmin();
+    }
+
+    // ---- المحاضرات + تقارير الحصص ----
+    match /reports/{id} {
+      allow read: if isAdmin()
+        || (isSup() && resource.data.supId == me())
+        || (isTeacher() && resource.data.teacherId == me());
+      allow create: if isAdmin()
+        || (isSup() && request.resource.data.supId == me())
+        || (isTeacher() && request.resource.data.teacherId == me());
+      allow update: if isAdmin()
+        || (isSup() && resource.data.supId == me() && request.resource.data.supId == me())
+        || (isTeacher() && resource.data.teacherId == me() && request.resource.data.teacherId == me()
+            && groupStatus(resource.data) != 'sent');
+      allow delete: if isAdmin()
+        || (isSup() && resource.data.supId == me())
+        || (isTeacher() && resource.data.teacherId == me() && groupStatus(resource.data) != 'sent');
+    }
+
+    // ---- رسائل واتساب (تذكير الاشتراك) ----
+    match /outbox/{id} {
+      allow read: if isAdmin() || (isTeacher() && resource.data.teacherId == me());
+      allow create: if isAdmin()
+        || (isTeacher() && request.resource.data.teacherId == me())
+        || (isSup() && request.resource.data.supId == me());
+      allow update: if isAdmin();
+      allow delete: if isAdmin()
+        || (isTeacher() && resource.data.teacherId == me() && resource.data.status == 'pending');
+    }
+  }
+}

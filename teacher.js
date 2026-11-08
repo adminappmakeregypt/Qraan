@@ -1,12 +1,9 @@
 /* ===================== Qraan — صفحة المحفظ ===================== */
 'use strict';
 
-const ses = Session.get();
-const db = Store.load();
+const db = Store.db;
 const S = db.settings;
-const me = ses?.role === 'teacher' ? Store.teacher(ses.id) : null;
-if (!me || me.active === false) { Session.clear(); location.href = 'index.html'; }
-else window.WHO = { role: 'teacher', id: me.id, name: me.name };
+let me = null;   // المحفظ الحالي (بعد تحميل البيانات)
 
 const OPEN_BEFORE = 30 * 60000;   // يمكن تسجيل الحضور قبل الموعد بنصف ساعة
 const UNDO_WINDOW = 24 * 3600000; // يمكن التراجع خلال 24 ساعة
@@ -187,7 +184,16 @@ function history() {
   </table></div>` : '<div class="card empty">لم تسجل محاضرات بعد.</div>'}`;
 }
 
-if (me && me.active !== false) {
+boot('teacher').then(p => {
+  me = Store.teacher(p.id);
+  window.WHO = { role: 'teacher', id: me.id, name: me.name };
+  const editing = () => $('#modal') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  let pend = false;
+  Store.onChange = () => {
+    if (me.active === false || !Store.teacher(me.id)) { alert('تم إيقاف الحساب — تواصل مع الإدارة'); return logout(); }
+    if (editing()) pend = true; else render();
+  };
   render();
-  setInterval(() => { if (current === 'schedule' && !$('#modal')) render(); }, 60000); // تحديث الأزرار كل دقيقة
-}
+  setInterval(() => { if (!editing() && current === 'schedule') render(); }, 60000); // تحديث الأزرار كل دقيقة
+  setInterval(() => { if (pend && !editing()) { pend = false; render(); } }, 1500);
+}).catch(() => {});

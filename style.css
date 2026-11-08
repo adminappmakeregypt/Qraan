@@ -207,3 +207,4 @@ details .msg-preview{margin-top:8px;max-height:320px;overflow:auto}
 .checks{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px 12px}
 .checks label{font-weight:500;display:flex;gap:8px;align-items:center;margin:0}
 .checks input{width:auto}
+body.loading .main::before{content:'جارٍ تحميل البيانات...';display:block;text-align:center;color:var(--muted);padding:60px 0}

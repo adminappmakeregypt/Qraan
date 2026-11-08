@@ -54,20 +54,30 @@
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script src="core.js"></script>
 <script>
-  const db = Store.load(), S = db.settings;
-  $('#academyName').textContent = S.academy;
   $('[name=adminCountry]').innerHTML = countryOptions('EG');
+  const busy = (form, on) => { const b = $('button', form); b.disabled = on; b.dataset.t ||= b.textContent; b.textContent = on ? 'جارٍ الدخول...' : b.dataset.t; };
 
-  // توجيه تلقائي لو فيه جلسة مفتوحة
-  const ses = Session.get();
-  if (ses?.role === 'admin') location.href = 'admin.html';
-  else if (ses?.role === 'teacher' && Store.teacher(ses.id)) location.href = 'teacher.html';
-  else if (ses?.role === 'supervisor' && Store.supervisor(ses.id)) location.href = 'supervisor.html';
-
-  if (!S.adminHash) $('#setupForm').classList.remove('hidden');
-  else $('#loginBox').classList.remove('hidden');
+  (async () => {
+    if (!fbInit()) return fatal('<h3>تعذر تحميل Firebase</h3><p class="muted">تأكد من الاتصال بالإنترنت ومن ملف firebase-config.js</p>');
+    const user = await authUser();
+    if (user) {   // جلسة مفتوحة ← توجيه للصفحة المناسبة
+      try { const p = await resolveProfile(user); if (p) return location.href = PAGE[p.role]; } catch (e) {}
+      await FB.auth.signOut();
+    }
+    let owner = false;
+    try {
+      owner = (await FB.fs.collection('meta').doc('owner').get()).exists;
+      const pub = await FB.fs.collection('meta').doc('public').get();
+      if (pub.exists && pub.data().academy) $('#academyName').textContent = pub.data().academy;
+    } catch (e) { toast('تعذر الاتصال: ' + errMsg(e), true); }
+    $(owner ? '#loginBox' : '#setupForm').classList.remove('hidden');
+  })();
 
   $$('.seg button').forEach(b => b.onclick = () => {
     $$('.seg button').forEach(x => x.classList.toggle('active', x === b));
@@ -76,41 +86,41 @@
     $('#adminForm').classList.toggle('hidden', b.dataset.tab !== 'admin');
   });
 
+  // أول تشغيل: إنشاء حساب المدير (مرة واحدة فقط — القاعدة تمنع إنشاء مدير تاني)
   $('#setupForm').onsubmit = async e => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    Object.assign(S, {
-      academy: f.academy.trim(), adminEmail: f.email.trim().toLowerCase(),
-      adminHash: await sha256(f.password), whatsapp: f.whatsapp.trim(), adminCountry: f.adminCountry,
-    });
-    Store.save(); Session.set({ role: 'admin' }); location.href = 'admin.html';
+    const f = Object.fromEntries(new FormData(e.target)); busy(e.target, true);
+    try {
+      const cred = await FB.auth.createUserWithEmailAndPassword(f.email.trim(), f.password);
+      await FB.fs.collection('meta').doc('owner').set({ uid: cred.user.uid, email: cred.user.email, createdAt: Date.now() });
+      const main = { ...defaultSettings(), academy: f.academy.trim() || 'Qraan', whatsapp: f.whatsapp.trim(), adminCountry: f.adminCountry };
+      SECRET_KEYS.forEach(k => delete main[k]); delete main.adminHash; delete main.adminEmail;
+      await FB.fs.collection('settings').doc('main').set(main);
+      await FB.fs.collection('meta').doc('public').set({ academy: main.academy });
+      location.href = 'admin.html';
+    } catch (err) { busy(e.target, false); toast(errMsg(err), true); }
   };
 
   $('#adminForm').onsubmit = async e => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    if (f.email.trim().toLowerCase() === S.adminEmail && await sha256(f.password) === S.adminHash) {
-      Session.set({ role: 'admin' }); location.href = 'admin.html';
-    } else toast('البريد أو كلمة المرور غير صحيحة', true);
+    const f = Object.fromEntries(new FormData(e.target)); busy(e.target, true);
+    try { await FB.auth.signInWithEmailAndPassword(f.email.trim(), f.password); location.href = 'admin.html'; }
+    catch (err) { busy(e.target, false); toast(err.code === 'auth/invalid-credential' ? 'البريد أو كلمة المرور غير صحيحة' : errMsg(err), true); }
   };
 
-  $('#teacherForm').onsubmit = e => {
+  // المحفظ والمشرفة: اسم المستخدم + الرقم
+  async function codeLogin(e, role) {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    const t = db.teachers.find(x => x.username.toLowerCase() === f.username.trim().toLowerCase() && String(x.code) === f.code.trim());
-    if (!t) return toast('اسم المستخدم أو الرقم غير صحيح', true);
-    if (t.active === false) return toast('الحساب موقوف — تواصل مع الإدارة', true);
-    Session.set({ role: 'teacher', id: t.id }); location.href = 'teacher.html';
-  };
-
-  $('#supervisorForm').onsubmit = e => {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    const u = db.supervisors.find(x => x.username.toLowerCase() === f.username.trim().toLowerCase() && String(x.code) === f.code.trim());
-    if (!u) return toast('اسم المستخدم أو الرقم غير صحيح', true);
-    if (u.active === false) return toast('الحساب موقوف — تواصل مع الإدارة', true);
-    Session.set({ role: 'supervisor', id: u.id }); location.href = 'supervisor.html';
-  };
+    const f = Object.fromEntries(new FormData(e.target)); busy(e.target, true);
+    try {
+      const cred = await FB.auth.signInWithEmailAndPassword(await emailOf(f.username), pwOf(f.code));
+      const p = await resolveProfile(cred.user);
+      if (!p) { await FB.auth.signOut(); throw { code: 'auth/user-not-found' }; }
+      location.href = PAGE[p.role];
+    } catch (err) { busy(e.target, false); toast(errMsg(err), true); }
+  }
+  $('#teacherForm').onsubmit = e => codeLogin(e, 'teacher');
+  $('#supervisorForm').onsubmit = e => codeLogin(e, 'supervisor');
 </script>
 </body>
 </html>
