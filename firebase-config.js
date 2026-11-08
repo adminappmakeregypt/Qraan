@@ -1,9 +1,13 @@
-/* إعدادات Firebase لمشروع Qraan — قيم تعريفية عامة (ليست سرية). الحماية الفعلية في Firestore Security Rules */
+/* ===================== إعدادات Firebase =====================
+   1) Firebase Console ← Project settings ← General ← Your apps ← Web app
+   2) انسخ قيم firebaseConfig والصقها مكان القيم بالأسفل
+   (هذه القيم ليست سرية — الحماية تتم عن طريق Firestore Rules)
+================================================================ */
 window.FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDhugVh5JcIQKlkt5razeco1yXjLmFaduI",
-  authDomain: "qraan-ee143.firebaseapp.com",
-  projectId: "qraan-ee143",
-  storageBucket: "qraan-ee143.firebasestorage.app",
-  messagingSenderId: "555014051832",
-  appId: "1:555014051832:web:3f01f55feb14b3f45d680d"
+  apiKey: "PASTE_API_KEY",
+  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
+  projectId: "PASTE_PROJECT_ID",
+  storageBucket: "PASTE_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "PASTE_SENDER_ID",
+  appId: "PASTE_APP_ID",
 };

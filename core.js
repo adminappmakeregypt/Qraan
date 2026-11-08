@@ -1,7 +1,7 @@
 /* ===================== Qraan — النواة المشتركة ===================== */
 'use strict';
 
-const DB_KEY = 'qraan_db_v1';   // البيانات القديمة في المتصفح (للنقل إلى Firebase فقط)
+const OLD_LOCAL_KEY = 'qraan_db_v1'; // بيانات النسخة القديمة المحفوظة في المتصفح (للنقل فقط)
 
 const COUNTRIES = {
   EG: { name: 'مصر',      tz: 'Africa/Cairo', code: '20',  flag: '🇪🇬' },
@@ -14,47 +14,9 @@ const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربع�
 const GRADES = ['ممتاز', 'جيد جدًا', 'جيد', 'يحتاج متابعة'];
 const ATT = { present: 'حضر', absent: 'لم يحضر', excused: 'غائب بعذر' };
 const STATUS = { paid: 'مدفوع', expired: 'منتهي' };
-const LEVELS = ['ممتاز', 'جيد جدًا', 'جيد', 'مقبول', 'يحتاج متابعة'];
-const SURAHS = ['الفاتحة','البقرة','آل عمران','النساء','المائدة','الأنعام','الأعراف','الأنفال','التوبة','يونس','هود','يوسف','الرعد','إبراهيم','الحجر','النحل','الإسراء','الكهف','مريم','طه','الأنبياء','الحج','المؤمنون','النور','الفرقان','الشعراء','النمل','القصص','العنكبوت','الروم','لقمان','السجدة','الأحزاب','سبأ','فاطر','يس','الصافات','ص','الزمر','غافر','فصلت','الشورى','الزخرف','الدخان','الجاثية','الأحقاف','محمد','الفتح','الحجرات','ق','الذاريات','الطور','النجم','القمر','الرحمن','الواقعة','الحديد','المجادلة','الحشر','الممتحنة','الصف','الجمعة','المنافقون','التغابن','الطلاق','التحريم','الملك','القلم','الحاقة','المعارج','نوح','الجن','المزمل','المدثر','القيامة','الإنسان','المرسلات','النبأ','النازعات','عبس','التكوير','الانفطار','المطففين','الانشقاق','البروج','الطارق','الأعلى','الغاشية','الفجر','البلد','الشمس','الليل','الضحى','الشرح','التين','العلق','القدر','البينة','الزلزلة','العاديات','القارعة','التكاثر','العصر','الهمزة','الفيل','قريش','الماعون','الكوثر','الكافرون','النصر','المسد','الإخلاص','الفلق','الناس'];
-const DEFAULT_TPL_GROUP =
-`🌸{academy}🌸
-تقرير الحصة
-
-اسم المعلمة : {teacher}
-اسم الطالب .. {student}
-👑👑👑👑👑
-
-💫 \`تم تسميع حفظ جديد\` :
-سورة :: {newSura}
-مستوى الحفظ .. {newLevel}
-
-💫 \`تم تسميع مراجعة\` :
-سورة :: {revSura}
-مستوى الحفظ : {revLevel}
-🌱🌱🌱🌱🌱🌱
-
-💫 \`الحفظ الجديد\`
-سورة ... {hwNew}
-
------❀✲✲❀-----
-💫 \`المراجعة\`
-سورة :: {hwRev}
-
-التجويد.. {tajweed}
-
-💫 \`الشرعي\` :
-{shari}
------❀✲✲❀-----
-مدة الحلقة: {duration}
-رقم الحلقة.. {lectureNo}
-تاريخ الحلقة : {dayname} {date}
-👑👑👑👑👑👑👑
-جعلنا الله وإياكم من أهل القرآن العاملين به 🤲🤲
-🌹🌹🌹🌹🌹🌹🌹`;
 
 const defaultSettings = () => ({
   academy: 'أكاديمية Qraan',
-  adminEmail: '', adminHash: '',
   whatsapp: '', adminCountry: 'EG',
   defaultLectures: 8,
   absentCounts: true,            // هل الغياب يخصم محاضرة من الباقة؟
@@ -63,10 +25,19 @@ const defaultSettings = () => ({
 `السلام عليكم
 نذكركم أن اليوم كانت آخر محاضرة تحفيظ قرآن.
 برجاء دفع قيمة الاشتراك الجديد.`,
+  // ===== رسالة تقييم الحصة (بعد «حضر») =====
+  sendEval: true,
+  tplEval:
+`السلام عليكم
+معكم أكاديمية الصفوة لتحفيظ القرآن الكريم.
+تقييم الطالب/ة {student} في حلقة يوم {date}: {grade}
+ملاحظات المحفظ: {notes}
+المحاضرات المتبقية في الباقة: {remaining}
+جزاكم الله خيرًا`,
+  waEvalTemplate: '',            // اسم قالب التقييم المعتمد من Meta (به 5 متغيرات)
   waMode: 'manual',              // manual = زر واتساب يدوي | api = إرسال تلقائي عبر WhatsApp Business API
-  waPhoneId: '', waToken: '', waVersion: 'v21.0',
-  waTemplate: '', waLang: 'ar',  // اسم القالب المعتمد من Meta ولغته
-  waProxy: '',                   // (اختياري) رابط خادم وسيط يحمل التوكن بدل المتصفح
+  waVersion: 'v21.0',
+  waTemplate: '', waLang: 'ar',  // اسم القالب المعتمد من Meta ولغته (التوكن محفوظ في Cloud Functions وليس هنا)
   tplSession:
 `السلام عليكم ورحمة الله وبركاته
 ولي أمر الطالب/ة: {student}
@@ -106,237 +77,153 @@ const defaultSettings = () => ({
 (بتوقيت {country}):
 {schedule}
 {academy}`,
-  // ===== قالب تقرير الحصة الذي يُرسل لجروب الطالب =====
-  tplGroup: DEFAULT_TPL_GROUP,
 });
 
-const defaultDB = () => ({ settings: defaultSettings(), teachers: [], supervisors: [], students: [], reports: [], outbox: [] });
+const defaultDB = () => ({ settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [] });
 
-/* ---------- التخزين: Firebase (Firestore + Authentication) ---------- */
-const COLS = ['teachers', 'supervisors', 'students', 'reports', 'outbox'];
-const SECRET_KEYS = ['waToken', 'waPhoneId', 'waProxy', 'waTemplate', 'waLang', 'waVersion', 'waMode'];
-const WRITABLE = { admin: COLS, supervisor: ['teachers', 'students', 'reports', 'outbox'], teacher: ['students', 'reports', 'outbox'] };
-const FB = { app: null, auth: null, fs: null, app2: null };
-
+/* ---------- Firebase ---------- */
+const FB = { app: null, auth: null, fs: null };
+function fbConfigured() { return !!(window.FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && !String(FIREBASE_CONFIG.apiKey).startsWith('PASTE')); }
 function fbInit() {
-  if (FB.app) return true;
-  if (!window.firebase || !window.FIREBASE_CONFIG) return false;
-  FB.app = firebase.initializeApp(window.FIREBASE_CONFIG);
+  if (FB.app) return FB;
+  if (!window.firebase) throw new Error('تعذر تحميل Firebase — تأكد من الاتصال بالإنترنت');
+  if (!fbConfigured()) throw new Error('config');
+  FB.app = firebase.apps.find(a => a.name === '[DEFAULT]') || firebase.initializeApp(FIREBASE_CONFIG);
   FB.auth = firebase.auth(); FB.fs = firebase.firestore();
-  try { FB.fs.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
-  return true;
+  return FB;
 }
-/** تطبيق ثانوي لإنشاء حسابات المحفظين/المشرفات بدون تسجيل خروج المدير */
-const fb2 = () => FB.app2 || (FB.app2 = firebase.initializeApp(window.FIREBASE_CONFIG, 'accounts'));
-const clean = o => JSON.parse(JSON.stringify(o ?? null));
-
-/* حسابات الدخول: اسم المستخدم + الرقم ← حساب Firebase (بريد داخلي + كلمة مرور مشتقة) */
-const pwOf = code => `qraan#${String(code).trim()}#key`;
-async function emailOf(username) { return 'u' + (await sha256('qraan:' + String(username).trim().toLowerCase())).slice(0, 32) + '@users.qraan.app'; }
-const AUTH_ERR = {
-  'auth/email-already-in-use': 'اسم المستخدم مستخدم بالفعل', 'auth/invalid-credential': 'اسم المستخدم أو الرقم غير صحيح',
-  'auth/wrong-password': 'البيانات غير صحيحة', 'auth/user-not-found': 'الحساب غير موجود', 'auth/invalid-email': 'البريد غير صحيح',
-  'auth/too-many-requests': 'محاولات كثيرة — حاول بعد دقائق', 'auth/network-request-failed': 'لا يوجد اتصال بالإنترنت',
-  'auth/weak-password': 'كلمة المرور ضعيفة (6 أحرف على الأقل)', 'permission-denied': 'ليس لديك صلاحية لهذا الإجراء',
-};
-const errMsg = e => AUTH_ERR[e?.code] || e?.message || String(e);
-
-/** إنشاء حساب دخول لمحفظ/مشرفة أو تحديث رقمه */
-async function ensureAccount(kind, obj, oldCode) {
-  const a2 = fb2().auth();
-  if (!obj.uid) {
-    const email = await emailOf(obj.username);
-    let cred;
-    try { cred = await a2.createUserWithEmailAndPassword(email, pwOf(obj.code)); }
-    catch (e) { if (e.code === 'auth/email-already-in-use') cred = await a2.signInWithEmailAndPassword(email, pwOf(obj.code)); else throw e; }
-    const uid = cred.user.uid;
-    await a2.signOut();
-    await FB.fs.collection('users').doc(uid).set({ role: kind, ref: obj.id });
-    return { uid, authEmail: email };
-  }
-  if (oldCode != null && String(oldCode) !== String(obj.code)) {
-    const cred = await a2.signInWithEmailAndPassword(obj.authEmail, pwOf(oldCode));
-    await cred.user.updatePassword(pwOf(obj.code)); await a2.signOut();
-  }
-  return null;
-}
-async function deleteAccount(obj) {
-  if (!obj?.uid) return;
-  try { await FB.fs.collection('users').doc(obj.uid).delete(); } catch (e) {}
-  try { const a2 = fb2().auth(); const c = await a2.signInWithEmailAndPassword(obj.authEmail, pwOf(obj.code)); await c.user.delete(); } catch (e) {}
+function configMissingScreen() {
+  document.body.innerHTML = `<div class="auth-wrap"><div class="auth-card"><div class="logo"><div class="mark">ق</div><div class="brand">Qraan</div></div>
+    <div class="note">لم يتم ربط Firebase بعد.<br>افتح ملف <b>firebase-config.js</b> والصق فيه إعدادات مشروعك من Firebase Console.</div></div></div>`;
 }
 
+/** حسابات المحفظين: اسم المستخدم + الرقم ← بريد وكلمة مرور داخلية في Firebase Auth */
+async function teacherEmail(username) { return 't' + (await sha256(String(username).trim().toLowerCase())).slice(0, 40) + '@teachers.qraan.app'; }
+const teacherPass = code => 'qraan#' + String(code).trim();
+function secondaryAuth() {
+  const app = firebase.apps.find(a => a.name === 'qraan-sec') || firebase.initializeApp(FIREBASE_CONFIG, 'qraan-sec');
+  return app.auth();
+}
+/** إنشاء/تحديث حساب دخول المحفظ (يتم من جهاز المدير دون تسجيل خروجه) */
+async function ensureTeacherAuth(t, oldCode) {
+  const a = secondaryAuth(), email = await teacherEmail(t.username);
+  try {
+    if (!t.uid) {
+      try { t.uid = (await a.createUserWithEmailAndPassword(email, teacherPass(t.code))).user.uid; }
+      catch (e) {
+        if (e.code !== 'auth/email-already-in-use') throw e;
+        const c = await a.signInWithEmailAndPassword(email, teacherPass(oldCode || t.code));
+        t.uid = c.user.uid;
+        if (oldCode && oldCode !== t.code) await c.user.updatePassword(teacherPass(t.code));
+      }
+    } else if (oldCode && oldCode !== t.code) {
+      const c = await a.signInWithEmailAndPassword(email, teacherPass(oldCode));
+      await c.user.updatePassword(teacherPass(t.code));
+    }
+  } finally { try { await a.signOut(); } catch (e) { } }
+}
+async function deleteTeacherAuth(t) {
+  const a = secondaryAuth();
+  try { const c = await a.signInWithEmailAndPassword(await teacherEmail(t.username), teacherPass(t.code)); await c.user.delete(); }
+  catch (e) { console.warn('delete auth', e); } finally { try { await a.signOut(); } catch (e) { } }
+}
+
+/* ---------- التخزين (Firestore مع مزامنة لحظية) ---------- */
+const stable = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)) ? Object.keys(x).sort().reduce((o, key) => (o[key] = x[key], o), {}) : x);
+const COLLS = ['teachers', 'students', 'reports', 'outbox'];
 const Store = {
-  db: defaultDB(), profile: null, onChange: null, _last: {}, _lastSettings: {}, _busy: 0,
+  db: { settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [] },
+  _last: { teachers: {}, students: {}, reports: {}, outbox: {}, settings: '' },
+  role: null, uid: null, onChange: null, _subs: [],
   load() { return this.db; },
   teacher(id) { return this.db.teachers.find(t => t.id === id); },
   student(id) { return this.db.students.find(s => s.id === id); },
-  supervisor(id) { return this.db.supervisors.find(s => s.id === id); },
 
-  /** تطبيق بيانات من السيرفر مع الحفاظ على نفس الكائنات (المراجع في الصفحات تفضل صحيحة) */
-  _apply(col, docs) {
-    const old = new Map(this.db[col].map(o => [o.id, o])), out = [];
-    this._last[col] = new Map();
-    docs.forEach(d => {
-      const data = { ...d.data, id: d.id };
-      this._last[col].set(d.id, JSON.stringify(clean(data)));
-      const o = old.get(d.id);
-      if (o) { Object.keys(o).forEach(k => delete o[k]); Object.assign(o, data); out.push(o); } else out.push(data);
+  /** بدء الاستماع للبيانات حسب الدور — المدير يرى كل شيء، المحفظ يرى بياناته فقط */
+  start(role, uid) {
+    this.role = role; this.uid = uid;
+    const fs = FB.fs;
+    const qs = role === 'admin'
+      ? { teachers: fs.collection('teachers'), students: fs.collection('students'), reports: fs.collection('reports'), outbox: fs.collection('outbox') }
+      : { teachers: fs.collection('teachers').where('uid', '==', uid), students: fs.collection('students').where('teacherUid', '==', uid), reports: fs.collection('reports').where('teacherUid', '==', uid) };
+    const listen = (ref, onData) => new Promise((res, rej) => {
+      let first = true;
+      this._subs.push(ref.onSnapshot(snap => { onData(snap); if (first) { first = false; res(); } else this._changed(); },
+        err => { console.error(err); if (first) { first = false; rej(err); } else toast('انقطع الاتصال بقاعدة البيانات', true); }));
     });
-    this.db[col] = out;
+    const waits = Object.entries(qs).map(([c, q]) => listen(q, snap => {
+      this.db[c] = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+      this._last[c] = Object.fromEntries(this.db[c].map(x => [x.id, stable(x)]));
+    }));
+    waits.push(listen(fs.doc('settings/main'), d => {
+      Object.assign(this.db.settings, defaultSettings(), d.data() || {});
+      this._last.settings = stable(this.db.settings);
+    }));
+    return Promise.all(waits);
   },
-  _applySettings(main, secret) {
-    const merged = { ...defaultSettings(), ...(main || {}), ...(secret || {}) };
-    Object.keys(this.db.settings).forEach(k => delete this.db.settings[k]);
-    Object.assign(this.db.settings, merged);
-    this._lastSettings = JSON.stringify(clean(this.db.settings));
-  },
-  /** بيانات مشتقة تُحفظ مع المستندات لتطبيق صلاحيات المشرفة */
-  _denorm() {
-    const role = this.profile?.role;
-    if (role === 'teacher') return;
-    this.db.teachers.forEach(t => {
-      const n = Store.supervisor(t.supervisorId)?.name;
-      if (!t.supervisorId) t.supervisorName = ''; else if (n) t.supervisorName = n;
-    });
-    this.db.students.forEach(st => { st.supId = effSupervisorId(st); });
-    if (role === 'admin') this.db.reports.forEach(r => { const st = Store.student(r.studentId); if (st) r.supId = st.supId; });
+  _changed() {
+    clearTimeout(this._ct);
+    this._ct = setTimeout(() => {
+      const a = document.activeElement;
+      if ($('#modal') || (a && a.closest && a.closest('#main') && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) return; // لا نقاطع المستخدم أثناء الكتابة
+      this.onChange && this.onChange();
+    }, 150);
   },
 
-  /** حفظ: يكتب المستندات المتغيرة فقط على Firebase (الكتابة تظهر فورًا والمزامنة في الخلفية) */
+  /** حفظ التغييرات فقط (diff) في Firestore */
   save() {
-    const role = this.profile?.role;
-    if (!role || !FB.fs) return;
-    this._denorm();
-    const ops = [], acc = [];
-    for (const col of WRITABLE[role]) {
-      const last = this._last[col] || new Map(), cur = new Map(this.db[col].map(o => [o.id, o]));
-      for (const [id, o] of cur) {
-        const j = JSON.stringify(clean(o));
-        if (last.get(id) !== j) {
-          ops.push({ col, id, data: clean(o) });
-          if ((col === 'teachers' || col === 'supervisors')) {
-            const prev = last.has(id) ? JSON.parse(last.get(id)) : null;
-            if (!o.uid || (prev && String(prev.code) !== String(o.code))) acc.push({ kind: col === 'teachers' ? 'teacher' : 'supervisor', id, oldCode: prev?.code });
-          }
-          last.set(id, j);
-        }
+    if (!this.role) return Promise.resolve();
+    const fs = FB.fs, main = [], ob = [];
+    const tUid = id => this.db.teachers.find(t => t.id === id)?.uid || '';
+    if (this.role === 'admin') this.db.students.forEach(s => { s.teacherUid = tUid(s.teacherId); });
+    this.db.reports.forEach(r => { if (!r.teacherUid) r.teacherUid = this.role === 'teacher' ? this.uid : tUid(r.teacherId); });
+    this.db.outbox.forEach(m => { if (!m.createdBy) m.createdBy = this.uid; });
+    const colls = this.role === 'admin' ? COLLS : ['students', 'reports', 'outbox'];
+    for (const c of colls) {
+      const next = {};
+      for (const item of this.db[c]) {
+        if (!item.id) item.id = uid();
+        const str = stable(item); next[item.id] = str;
+        if (this._last[c][item.id] !== str) (c === 'outbox' ? ob : main).push(['set', fs.collection(c).doc(item.id), JSON.parse(str)]);
       }
-      for (const id of [...last.keys()]) if (!cur.has(id)) {
-        ops.push({ col, id, del: true });
-        if (col === 'teachers' || col === 'supervisors') acc.push({ del: true, obj: JSON.parse(last.get(id)) });
-        last.delete(id);
-      }
-      this._last[col] = last;
+      for (const id of Object.keys(this._last[c])) if (!(id in next)) (c === 'outbox' ? ob : main).push(['del', fs.collection(c).doc(id)]);
+      this._last[c] = next;
     }
-    if (role === 'admin') {
-      const j = JSON.stringify(clean(this.db.settings));
-      if (j !== this._lastSettings) {
-        const all = clean(this.db.settings), main = {}, secret = {};
-        Object.entries(all).forEach(([k, v]) => (SECRET_KEYS.includes(k) ? secret : main)[k] = v);
-        delete main.adminHash; delete main.adminEmail;
-        ops.push({ col: 'settings', id: 'main', data: main }, { col: 'settings', id: 'secret', data: secret });
-        ops.push({ col: 'meta', id: 'public', data: { academy: main.academy || 'Qraan' } });
-        this._lastSettings = j;
-      }
+    if (this.role === 'admin') {
+      const st = stable(this.db.settings);
+      if (st !== this._last.settings) { main.push(['set', fs.doc('settings/main'), JSON.parse(st)]); this._last.settings = st; }
     }
-    if (!ops.length && !acc.length) return;
-    this._busy++;
-    const run = async () => {
-      for (let i = 0; i < ops.length; i += 400) {
-        const b = FB.fs.batch();
-        ops.slice(i, i + 400).forEach(op => { const ref = FB.fs.collection(op.col).doc(op.id); op.del ? b.delete(ref) : b.set(ref, op.data); });
+    const commit = async ops => {
+      for (let i = 0; i < ops.length; i += 450) {
+        const b = fs.batch();
+        ops.slice(i, i + 450).forEach(([t, ref, data]) => t === 'set' ? b.set(ref, data) : b.delete(ref));
         await b.commit();
       }
-      for (const a of acc) {
-        if (a.del) { await deleteAccount(a.obj); continue; }
-        const col = a.kind === 'teacher' ? 'teachers' : 'supervisors', o = this.db[col].find(x => x.id === a.id);
-        if (!o) continue;
-        try {
-          const r = await ensureAccount(a.kind, o, a.oldCode);
-          if (r) { Object.assign(o, r); await FB.fs.collection(col).doc(o.id).update(r); this._last[col].set(o.id, JSON.stringify(clean(o))); }
-        } catch (e) { toast(`تعذر إنشاء/تحديث حساب دخول «${o.name}»: ${errMsg(e)}`, true); }
-      }
     };
-    this._pending = run().catch(e => { toast('لم يتم الحفظ على السيرفر: ' + errMsg(e), true); console.error(e); })
-      .finally(() => { this._busy--; });
-    return this._pending;
+    return commit(main).then(() => commit(ob).catch(e => console.warn('outbox', e)))
+      .catch(e => { console.error(e); toast('تعذر الحفظ: ' + (e.code === 'permission-denied' ? 'لا توجد صلاحية' : e.message), true); });
   },
 };
-/** المشرفة الفعلية للطالب: المحددة له، وإلا مشرفة محفظه — أي تغيير في المحفظ ينعكس على كل طلابه */
-const effSupervisorId = st => (st && (st.supervisorId || Store.teacher(st.teacherId)?.supervisorId)) || '';
-const supervisorName = id => Store.supervisor(id)?.name || Store.db.teachers.find(t => t.supervisorId === id)?.supervisorName || '';
-const supervisorOptions = (sel, empty = '— بدون مشرفة —') => `<option value="">${empty}</option>` +
-  Store.db.supervisors.map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(u.name)}${u.active === false ? ' (موقوفة)' : ''}</option>`).join('');
-/** اسم المستخدم محجوز (محفظ أو مشرفة) */
-function usernameTaken(uname, exceptId) {
-  const u = String(uname).trim().toLowerCase();
-  return [...Store.db.teachers, ...Store.db.supervisors].some(x => x.id !== exceptId && String(x.username).toLowerCase() === u);
-}
 
-/* ---------- الجلسة والدخول ---------- */
-const Session = { get: () => Store.profile, set() {}, clear() {} };
-const PAGE = { admin: 'admin.html', supervisor: 'supervisor.html', teacher: 'teacher.html' };
-async function logout() { try { await FB.auth?.signOut(); } catch (e) {} location.href = 'index.html'; }
-
-/** من هو المستخدم الحالي؟ مدير (meta/owner) أو محفظ/مشرفة (users/uid) */
-async function resolveProfile(user) {
-  const own = await FB.fs.collection('meta').doc('owner').get();
-  if (own.exists && own.data().uid === user.uid) return { role: 'admin', id: 'admin', email: user.email };
-  const u = await FB.fs.collection('users').doc(user.uid).get();
-  return u.exists ? { role: u.data().role, id: u.data().ref } : null;
+/** تشغيل الصفحة بعد التأكد من تسجيل الدخول وتحميل البيانات */
+function boot(role) {
+  return new Promise(resolve => {
+    let F;
+    try { F = fbInit(); } catch (e) { if (e.message === 'config') configMissingScreen(); else alert(e.message); return; }
+    let started = false;
+    F.auth.onAuthStateChanged(async u => {
+      if (!u) { location.href = 'index.html'; return; }
+      if (started) return; started = true;
+      try {
+        if (role === 'admin' && !(await F.fs.doc('admins/' + u.uid).get()).exists) throw new Error('not admin');
+        await Store.start(role, u.uid);
+        if (role === 'teacher') { const t = Store.db.teachers[0]; if (!t || t.active === false) throw new Error('inactive'); }
+        resolve(u);
+      } catch (e) { console.error(e); try { await F.auth.signOut(); } catch (x) { } location.href = 'index.html'; }
+    });
+  });
 }
-const authUser = () => new Promise(res => { const off = FB.auth.onAuthStateChanged(u => { off(); res(u); }); });
-
-/** اسم التطبيق = اسم الأكاديمية من الإعدادات (القائمة الجانبية + عنوان الصفحة) */
-function applyBrand(name = Store.db.settings.academy) {
-  const n = (name || '').trim() || 'Qraan';
-  $$('.brand').forEach(b => { b.textContent = n; });
-  document.title = document.title.replace(/^[^—]+—/, n + ' —');
-}
-function fatal(html) { document.body.innerHTML = `<div class="auth-wrap"><div class="auth-card">${html}</div></div>`; }
-
-/** تشغيل الصفحة: يتحقق من الدخول ثم يربط البيانات المباشرة حسب الدور */
-async function boot(role) {
-  if (!fbInit()) { fatal('<h3>تعذر تحميل Firebase</h3><p class="muted">تأكد من الاتصال بالإنترنت ومن ملف <code>firebase-config.js</code>.</p>'); throw new Error('no firebase'); }
-  document.body.classList.add('loading');
-  const user = await authUser();
-  if (!user) { location.href = 'index.html'; throw new Error('no user'); }
-  let p;
-  try { p = await resolveProfile(user); } catch (e) { fatal(`<h3>تعذر الاتصال</h3><p class="muted">${esc(errMsg(e))}</p><button class="btn" onclick="location.reload()">إعادة المحاولة</button>`); throw e; }
-  if (!p) { await FB.auth.signOut(); location.href = 'index.html'; throw new Error('no profile'); }
-  if (p.role !== role) { location.href = PAGE[p.role]; throw new Error('wrong page'); }
-  Store.profile = p;
-  const fs = FB.fs, listeners = [];
-  const q = {
-    admin: { teachers: fs.collection('teachers'), supervisors: fs.collection('supervisors'), students: fs.collection('students'), reports: fs.collection('reports'), outbox: fs.collection('outbox') },
-    supervisor: { supervisors: fs.collection('supervisors').doc(p.id), teachers: fs.collection('teachers').where('supervisorId', '==', p.id),
-      students: fs.collection('students').where('supId', '==', p.id), reports: fs.collection('reports').where('supId', '==', p.id) },
-    teacher: { teachers: fs.collection('teachers').doc(p.id), students: fs.collection('students').where('teacherId', '==', p.id),
-      reports: fs.collection('reports').where('teacherId', '==', p.id), outbox: fs.collection('outbox').where('teacherId', '==', p.id) },
-  }[role];
-  let main = null, secret = null;
-  const waits = [];
-  const notify = () => { if (Store._ready && Store.onChange) Store.onChange(); };
-  const listen = (ref, onData) => waits.push(new Promise((res, rej) => {
-    let first = true;
-    listeners.push(ref.onSnapshot({ includeMetadataChanges: false }, snap => { onData(snap); if (first) { first = false; res(); } else notify(); },
-      err => { if (first) rej(err); else toast('انقطع الاتصال بالبيانات: ' + errMsg(err), true); }));
-  }));
-  for (const [col, ref] of Object.entries(q)) {
-    listen(ref, snap => Store._apply(col, snap.docs ? snap.docs.map(d => ({ id: d.id, data: d.data() })) : (snap.exists ? [{ id: snap.id, data: snap.data() }] : [])));
-  }
-  listen(fs.collection('settings').doc('main'), d => { main = d.exists ? d.data() : null; Store._applySettings(main, secret); });
-  if (role === 'admin') listen(fs.collection('settings').doc('secret'), d => { secret = d.exists ? d.data() : null; Store._applySettings(main, secret); });
-  try { await Promise.all(waits); }
-  catch (e) { fatal(`<h3>تعذر تحميل البيانات</h3><p class="muted">${esc(errMsg(e))}</p><button class="btn" onclick="logout()">خروج</button>`); throw e; }
-  const meDoc = role === 'teacher' ? Store.teacher(p.id) : role === 'supervisor' ? Store.supervisor(p.id) : true;
-  if (!meDoc || meDoc.active === false) { await FB.auth.signOut(); alert('الحساب موقوف أو محذوف — تواصل مع الإدارة'); location.href = 'index.html'; throw new Error('inactive'); }
-  Store._ready = true;
-  document.body.classList.remove('loading');
-  applyBrand();
-  return p;
-}
+function logout() { (FB.auth ? FB.auth.signOut() : Promise.resolve()).finally(() => { location.href = 'index.html'; }); }
 
 /* ---------- أدوات عامة ---------- */
 const $ = (s, el = document) => el.querySelector(s);
@@ -443,11 +330,12 @@ function msgVars(st, extra = {}) {
   };
 }
 
-function queueMessage(kind, st, text) {
+function queueMessage(kind, st, text, params) {
   const m = {
-    id: uid(), kind, studentId: st.id, studentName: st.name, teacherId: st.teacherId, supId: effSupervisorId(st),
+    id: uid(), kind, studentId: st.id, studentName: st.name, teacherId: st.teacherId,
     phone: normPhone(st.parentPhone, st.country), text, createdAt: Date.now(), status: 'pending',
   };
+  if (params) m.params = params.map(x => String(x ?? '').trim() || '—');   // متغيرات قالب Meta بالترتيب
   Store.db.outbox.push(m);
   return m;
 }
@@ -495,7 +383,7 @@ function teacherSessions(teacherId, country, pastDays = 7, nextDays = 7) {
   return out.sort((a, b) => a.ts - b.ts);
 }
 
-function recordSession(st, teacher, occ, attendance, report = null) {
+function recordSession(st, teacher, occ, attendance, extra = {}) {
   const S = Store.db.settings;
   if (!isActive(st)) throw new Error('اشتراك الطالب منتهي — لا توجد محاضرات قبل التجديد');
   if (Store.db.reports.some(r => r.slotKey === occ.key)) throw new Error('تم تسجيل هذه المحاضرة من قبل');
@@ -508,12 +396,16 @@ function recordSession(st, teacher, occ, attendance, report = null) {
   const rep = {
     id: uid(), studentId: st.id, teacherId: teacher.id, createdAt: Date.now(), slotKey: occ.key, sessionTs: occ.ts,
     date: occ.date, time: occ.time, attendance, counted, lectureNo, remainingAfter: st.remaining, wasStatus, msgIds: [],
-    supId: effSupervisorId(st),
   };
+  if (attendance === 'present' && extra.grade) { rep.grade = extra.grade; rep.notes = (extra.notes || '').trim(); }
   Store.db.reports.push(rep);
-  if (attendance === 'present' && report) setGroupReport(rep, report);
 
   const msgs = [];
+  if (rep.grade && S.sendEval) {   // رسالة تقييم الحصة لولي الأمر
+    const loc = localOf(occ.ts, st.country);
+    const v = msgVars(st, { date: loc.iso, grade: rep.grade, notes: rep.notes || '—' });
+    msgs.push(queueMessage('eval', st, fill(S.tplEval, v), [st.name, loc.iso, rep.grade, rep.notes, st.remaining]));
+  }
   if (st.remaining <= 0) {   // آخر محاضرة في الباقة → رسالة واحدة لولي الأمر
     st.status = 'expired'; st.expiredAt = Date.now();
     msgs.push(queueMessage('renew', st, fill(S.tplEnd, msgVars(st))));
@@ -521,151 +413,6 @@ function recordSession(st, teacher, occ, attendance, report = null) {
   rep.msgIds = msgs.map(m => m.id); rep.msgId = msgs[0]?.id || null;
   Store.save();
   return { rep, msgs };
-}
-
-/* ---------- تقرير الحصة → جروب الطالب ---------- */
-const durationText = m => { m = +m || 0; return m === 30 ? 'نصف ساعة' : m === 60 ? 'ساعة' : m === 45 ? 'ثلاثة أرباع ساعة' : m === 90 ? 'ساعة ونصف' : m ? `${m} دقيقة` : ''; };
-const dmy = iso => { const [y, m, d] = String(iso).split('-'); return d ? `${+d}/${+m}/${y}` : iso; };
-
-function groupVars(rep) {
-  const st = Store.student(rep.studentId), t = Store.teacher(rep.teacherId), f = rep.report || {};
-  return {
-    academy: Store.db.settings.academy, teacher: t?.name || '', student: st?.name || '',
-    newSura: f.newSura, newLevel: f.newLevel, revSura: f.revSura, revLevel: f.revLevel,
-    hwNew: f.hwNew, hwRev: f.hwRev, tajweed: f.tajweed, shari: f.shari, duration: f.duration,
-    lectureNo: rep.lectureNo, dayname: DAYS[new Date(rep.date + 'T12:00:00Z').getUTCDay()] || '', date: dmy(rep.date),
-  };
-}
-const buildGroupText = rep => fill(Store.db.settings.tplGroup || DEFAULT_TPL_GROUP, groupVars(rep));
-
-/** حفظ/تعديل تقرير الحصة على محاضرة مسجلة — يصبح «جاهز للإرسال» عند المشرفة */
-function setGroupReport(rep, report) {
-  if (rep.group?.status === 'sent') throw new Error('التقرير اتبعت للجروب بالفعل — لا يمكن تعديله');
-  const st = Store.student(rep.studentId);
-  rep.report = { ...report };
-  rep.groupText = buildGroupText(rep);
-  rep.group = { ...(rep.group || {}), status: 'ready', groupName: st?.groupName || '', updatedAt: Date.now() };
-  rep.group.createdAt ||= Date.now();
-  Store.save();
-  return rep;
-}
-const groupReports = () => Store.db.reports.filter(r => r.group);
-const whoLabel = w => w ? `${w.name}${w.role === 'admin' ? ' (الإدارة)' : ''}` : '';
-
-/** فتح واتساب على موبايل/كمبيوتر المستخدم والرسالة جاهزة — يختار الجروب بنفسه ويضغط إرسال */
-function openGroupShare(repId, who) {
-  const r = Store.db.reports.find(x => x.id === repId);
-  if (!r?.group) return;
-  const st = Store.student(r.studentId);
-  if (st?.groupName && st.groupName !== r.group.groupName) r.group.groupName = st.groupName;
-  r.group.openedAt = Date.now(); r.group.openedBy = who; Store.save();
-  const g = r.group.groupName;
-  if (g && navigator.clipboard) navigator.clipboard.writeText(g).catch(() => {});
-  window.open('https://wa.me/?text=' + encodeURIComponent(r.groupText), '_blank');
-}
-function confirmGroupSent(repId, who) {
-  const r = Store.db.reports.find(x => x.id === repId);
-  if (!r?.group) return;
-  Object.assign(r.group, { status: 'sent', sentAt: Date.now(), sentBy: who });
-  Store.save();
-}
-function unsendGroup(repId) {
-  const r = Store.db.reports.find(x => x.id === repId);
-  if (!r?.group) return;
-  r.group.status = 'ready'; delete r.group.sentAt; delete r.group.sentBy; Store.save();
-}
-
-/** إحصائيات المحفظين: محاضرات + تقارير + ما اتبعت للجروبات (month = 'YYYY-MM' أو 'all') */
-function teacherReportStats(country, month, repScope = null, teacherScope = null) {
-  const reps = Store.db.reports.filter(r => (month === 'all' || repWhen(r, country).iso.startsWith(month)) && (!repScope || repScope(r)));
-  const ts = Store.db.teachers.filter(t => !teacherScope || teacherScope(t) || reps.some(r => r.teacherId === t.id));
-  return ts.map(t => {
-    const rs = reps.filter(r => r.teacherId === t.id), g = rs.filter(r => r.group);
-    return {
-      t, lectures: rs.length, present: rs.filter(r => r.attendance === 'present').length, absent: rs.filter(r => r.attendance !== 'present').length,
-      reports: g.length, sent: g.filter(r => r.group.status === 'sent').length, ready: g.filter(r => r.group.status !== 'sent').length,
-      noReport: rs.filter(r => r.attendance === 'present' && !r.group).length,
-    };
-  });
-}
-
-/* ---------- واجهة مشتركة: قائمة تقارير الجروبات (المشرفة + الإدارة) ---------- */
-const grp = { tab: 'ready', teacher: '', sup: '', q: '' };
-let _awaitConfirm = null;
-/** scope: دالة تحدد التقارير المسموح بعرضها (للمشرفة: طلابها فقط) — بدونها (المدير) يظهر فلتر المشرفة */
-function groupReportsView(country, scope = null) {
-  const all = groupReports().filter(r => !scope || scope(r));
-  const ready = all.filter(r => r.group.status !== 'sent'), sent = all.filter(r => r.group.status === 'sent');
-  const q = grp.q.trim().toLowerCase();
-  const list = (grp.tab === 'ready' ? ready : sent).filter(r => {
-    const st = Store.student(r.studentId);
-    return (!grp.teacher || r.teacherId === grp.teacher) && (scope || !grp.sup || effSupervisorId(st) === (grp.sup === 'none' ? '' : grp.sup)) && (!q || ((st?.name || '') + ' ' + (r.group.groupName || '')).toLowerCase().includes(q));
-  }).sort((a, b) => grp.tab === 'ready' ? (a.sessionTs || a.createdAt) - (b.sessionTs || b.createdAt) : b.group.sentAt - a.group.sentAt);
-  return `
-  <div class="topbar"><h2>تقارير الحصص للجروبات</h2>
-    <div class="seg" style="margin:0;min-width:280px"><button class="${grp.tab === 'ready' ? 'active' : ''}" onclick="grp.tab='ready';render()">جاهزة للإرسال (${ready.length})</button><button class="${grp.tab === 'sent' ? 'active' : ''}" onclick="grp.tab='sent';render()">المُرسلة (${sent.length})</button></div></div>
-  <div class="toolbar">
-    <input placeholder="🔍 بحث باسم الطالب أو الجروب" value="${esc(grp.q)}" oninput="grp.q=this.value;grpDebounce()">
-    ${scope ? '' : `<select onchange="grp.sup=this.value;render()"><option value="">كل المشرفات</option>${Store.db.supervisors.map(u => `<option value="${u.id}" ${u.id === grp.sup ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}<option value="none" ${grp.sup === 'none' ? 'selected' : ''}>بدون مشرفة</option></select>`}
-    <select onchange="grp.teacher=this.value;render()"><option value="">كل المحفظين</option>${Store.db.teachers.filter(t => !scope || all.some(r => r.teacherId === t.id) || t.supervisorId === window.WHO?.id).map(t => `<option value="${t.id}" ${t.id === grp.teacher ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
-  </div>
-  ${grp.tab === 'ready' ? '<div class="note small">اضغطي «إرسال للجروب» ← واتساب هيفتح والرسالة جاهزة ← اختاري الجروب (اسمه اتنسخ، الصقيه في البحث) ← إرسال ← ارجعي وأكّدي «اتبعت».</div>' : ''}
-  ${list.length ? `<div class="gcards">${list.map(r => groupCard(r, country, !scope)).join('')}</div>` : `<div class="card empty">${grp.tab === 'ready' ? 'لا توجد تقارير في انتظار الإرسال ✅' : 'لا توجد تقارير مُرسلة بعد.'}</div>`}`;
-}
-function groupCard(r, country, showSup = false) {
-  const st = Store.student(r.studentId), w = repWhen(r, country), g = r.group, sent = g.status === 'sent';
-  const gname = st?.groupName || g.groupName;
-  return `<div class="gcard ${sent ? 'sent' : g.openedAt ? 'opened' : ''}">
-    <div class="gcard-head"><div><b>${esc(st?.name || '—')}</b><div class="muted small">${esc(Store.teacher(r.teacherId)?.name || '—')} · الحلقة ${r.lectureNo || '—'} · ${fmtDayDate(w.iso)}${w.time ? ' ' + fmtTime(w.time) : ''}</div>${showSup ? `<div class="small">👩‍💼 ${esc(supervisorName(effSupervisorId(st)) || 'بدون مشرفة')}</div>` : ''}</div>
-      ${sent ? '<span class="pill ok">✅ اتبعت</span>' : g.openedAt ? '<span class="pill warn">اتفتح في واتساب</span>' : '<span class="pill gold">جاهز للإرسال</span>'}</div>
-    <div class="gname">${gname ? `👥 ${esc(gname)}` : '<span style="color:var(--danger)">⚠️ اسم الجروب غير مسجل للطالب</span>'}</div>
-    <details><summary class="small">عرض الرسالة</summary><div class="msg-preview">${esc(r.groupText)}</div></details>
-    ${sent ? `<div class="muted small">أُرسل ${fmtDateTime(g.sentAt)} بواسطة ${esc(whoLabel(g.sentBy))}</div>
-      <div class="gact"><button class="btn sm ghost" onclick="grpSend('${r.id}')">إعادة الفتح في واتساب</button><button class="btn sm ghost" onclick="grpUnsend('${r.id}')">رجوع لـ «جاهز»</button></div>`
-    : `<div class="gact"><button class="btn wa" onclick="grpSend('${r.id}')">📤 إرسال للجروب</button>
-      ${g.openedAt ? `<button class="btn" onclick="grpConfirm('${r.id}')">✅ اتبعت</button>` : ''}</div>`}
-  </div>`;
-}
-let _gt; function grpDebounce() { clearTimeout(_gt); _gt = setTimeout(() => { const pos = document.activeElement?.selectionStart; render(); const i = $('.toolbar input'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }, 250); }
-function grpSend(id) {
-  const r = Store.db.reports.find(x => x.id === id);
-  openGroupShare(id, window.WHO);
-  if (r?.group.status !== 'sent') { _awaitConfirm = id; toast(r?.group.groupName ? `اسم الجروب اتنسخ: ${r.group.groupName}` : 'اختاري جروب الطالب في واتساب'); }
-  render();
-}
-function grpConfirm(id) { confirmGroupSent(id, window.WHO); _awaitConfirm = null; closeModal(); toast('تم تسجيل الإرسال ✅'); render(); }
-function grpUnsend(id) { if (!confirmBox('إرجاع التقرير لقائمة «جاهز للإرسال»؟')) return; unsendGroup(id); render(); }
-// عند الرجوع من واتساب: نسأل «اتبعت؟»
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible' || !_awaitConfirm) return;
-  const r = Store.db.reports.find(x => x.id === _awaitConfirm); if (!r?.group || r.group.status === 'sent') return;
-  const st = Store.student(r.studentId), id = _awaitConfirm;
-  setTimeout(() => openModal('تأكيد الإرسال', `<p>تم إرسال تقرير <b>${esc(st?.name || '')}</b> لجروب <b>${esc(r.group.groupName || '—')}</b>؟</p>`,
-    `<button class="btn" onclick="grpConfirm('${id}')">✅ أيوه، اتبعت</button><button class="btn ghost" onclick="_awaitConfirm=null;closeModal()">لسه</button>`), 300);
-});
-
-/* ---------- نموذج تقرير الحصة (المحفظ) ---------- */
-function reportFormHtml(st, f = {}) {
-  const lv = (name, v) => `<select name="${name}">${LEVELS.map(l => `<option ${l === (v || 'ممتاز') ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
-  const inp = (name, v, ph = '', list = true) => `<input name="${name}" value="${esc(v || '')}" placeholder="${ph}" ${list ? 'list="surahList"' : ''}>`;
-  return `<form id="repf">
-    <datalist id="surahList">${SURAHS.map(s => `<option value="${s}">`).join('')}</datalist>
-    <div class="note small" style="margin-bottom:10px">👥 جروب الطالب: <b>${esc(st.groupName || 'غير مسجل — بلّغ الإدارة')}</b></div>
-    <div class="rsec">💫 تسميع الحفظ الجديد</div>
-    <div class="row"><div class="field"><label>السورة</label>${inp('newSura', f.newSura, 'مثال: النبأ')}</div><div class="field"><label>مستوى الحفظ</label>${lv('newLevel', f.newLevel)}</div></div>
-    <div class="rsec">💫 تسميع المراجعة</div>
-    <div class="row"><div class="field"><label>السورة / الجزء</label>${inp('revSura', f.revSura, 'مثال: جزء المجادلة')}</div><div class="field"><label>مستوى الحفظ</label>${lv('revLevel', f.revLevel)}</div></div>
-    <div class="rsec">💫 الواجب القادم</div>
-    <div class="row"><div class="field"><label>الحفظ الجديد</label>${inp('hwNew', f.hwNew, 'السورة المطلوبة')}</div><div class="field"><label>المراجعة</label>${inp('hwRev', f.hwRev, 'السورة / الجزء')}</div></div>
-    <div class="row"><div class="field"><label>التجويد</label>${inp('tajweed', f.tajweed, 'مثال: الإظهار الحلقي', false)}</div><div class="field"><label>الشرعي</label>${inp('shari', f.shari ?? 'لا يوجد', '', false)}</div></div>
-    <div class="field"><label>مدة الحلقة</label>${inp('duration', f.duration ?? durationText(st.duration || 30), '', false)}</div>
-    <details><summary class="small">معاينة الرسالة</summary><div class="msg-preview" id="repPrev"></div></details>
-  </form>`;
-}
-function readReportForm() { const d = Object.fromEntries(new FormData($('#repf'))); Object.keys(d).forEach(k => d[k] = String(d[k]).trim()); return d; }
-function bindReportPreview(fakeRep) {
-  const upd = () => { $('#repPrev').textContent = fill(Store.db.settings.tplGroup || DEFAULT_TPL_GROUP, groupVars({ ...fakeRep, report: readReportForm() })); };
-  $('#repf').addEventListener('input', upd); $('#repf').addEventListener('change', upd); upd();
 }
 
 /** إلغاء تسجيل محاضرة (تصحيح خطأ) — يرجع الرصيد ويحذف الرسائل التي لم تُرسل */
@@ -763,36 +510,10 @@ function queueSchedule(st) {
   return m;
 }
 
-/** إرسال رسالة عبر WhatsApp Business API (أو الخادم الوسيط) */
-async function apiSend(m) {
-  const S = Store.db.settings;
-  if (!m.phone) throw new Error('رقم ولي الأمر غير مسجل');
-  let res, body;
-  if (S.waProxy) {
-    res = await fetch(S.waProxy, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: m.phone, template: S.waTemplate, language: S.waLang, text: m.text }) });
-  } else {
-    if (!S.waPhoneId || !S.waToken || !S.waTemplate) throw new Error('إعدادات WhatsApp API غير مكتملة');
-    res = await fetch(`https://graph.facebook.com/${S.waVersion || 'v21.0'}/${S.waPhoneId}/messages`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.waToken },
-      body: JSON.stringify({ messaging_product: 'whatsapp', to: m.phone, type: 'template', template: { name: S.waTemplate, language: { code: S.waLang || 'ar' } } }),
-    });
-  }
-  try { body = await res.json(); } catch { body = {}; }
-  if (!res.ok) throw new Error(body?.error?.message || ('HTTP ' + res.status));
-  return body;
-}
-/** تسليم الرسالة: تلقائي لو API مفعّل، وإلا تبقى في الانتظار للإرسال اليدوي */
-async function deliver(m) {
-  if (Store.profile?.role !== 'admin' || Store.db.settings.waMode !== 'api') return 'manual';   // التوكن عند الإدارة فقط
-  try {
-    const r = await apiSend(m);
-    m.status = 'sent'; m.sentAt = Date.now(); m.via = 'api'; m.waId = r?.messages?.[0]?.id || ''; delete m.error;
-    Store.save(); return 'sent';
-  } catch (e) {
-    m.status = 'pending'; m.error = e.message; m.lastTry = Date.now(); Store.save(); return 'failed';
-  }
-}
+/** الإرسال التلقائي يتم على سيرفر Firebase (Cloud Function) فور إضافة الرسالة — هنا نُرجع الحالة فقط */
+async function deliver(m) { return Store.db.settings.waMode === 'api' ? 'queued' : 'manual'; }
+/** إعادة محاولة الإرسال التلقائي (تُشغّل الـ Cloud Function مرة أخرى) */
+function retrySend(m) { m.status = 'pending'; m.retryAt = Date.now(); delete m.error; Store.save(); }
 
 function markSent(id) {
   const m = Store.db.outbox.find(x => x.id === id);
@@ -806,7 +527,7 @@ function sendWhatsApp(id) {
   markSent(id);
 }
 
-const KIND = { report: ['تقرير', 'ok'], renew: ['انتهاء الباقة', 'danger'], schedule: ['مواعيد', 'gold'], test: ['اختبار', 'gray'] };
+const KIND = { report: ['تقرير', 'ok'], renew: ['انتهاء الباقة', 'danger'], eval: ['تقييم الحصة', 'ok'], schedule: ['مواعيد', 'gold'], test: ['اختبار', 'gray'] };
 function kindPill(k) { const [l, c] = KIND[k] || [k, 'gray']; return `<span class="pill ${c}">${l}</span>`; }
 function statusPill(st) {
   if (st.status === 'expired' || st.remaining <= 0) return '<span class="pill danger">منتهي</span>';

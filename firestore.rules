@@ -1,115 +1,60 @@
 rules_version = '2';
-// ===== Qraan — قواعد حماية Firestore =====
-// المدير: كل البيانات. المشرفة: محفظينها وطلابها وتقاريرهم. المحفظ: طلابه ومحاضراته بس.
+// ===================== Qraan — قواعد الحماية =====================
+// المدير: كل الصلاحيات.  المحفظ: يرى طلابه ومحاضراته فقط، ويسجل الحضور.
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function signedIn() { return request.auth != null; }
-    function isAdmin() {
-      return signedIn() && exists(/databases/$(database)/documents/meta/owner)
-        && get(/databases/$(database)/documents/meta/owner).data.uid == request.auth.uid;
-    }
-    function hasProfile() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)); }
-    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-    function me() { return profile().ref; }
-    // الحساب الموقوف (active = false) يفقد الصلاحيات
-    function isSup() {
-      return hasProfile() && profile().role == 'supervisor'
-        && get(/databases/$(database)/documents/supervisors/$(profile().ref)).data.get('active', true) != false;
-    }
-    function isTeacher() {
-      return hasProfile() && profile().role == 'teacher'
-        && get(/databases/$(database)/documents/teachers/$(profile().ref)).data.get('active', true) != false;
-    }
-    function groupStatus(d) { return d.get('group', {}).get('status', ''); }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function mine(d) { return signedIn() && d.teacherUid == request.auth.uid; }
 
-    // ---- المدير (أول حساب يتعمل بس) + اسم الأكاديمية لصفحة الدخول ----
-    match /meta/owner {
-      allow read: if true;
-      allow create: if signedIn() && !exists(/databases/$(database)/documents/meta/owner)
-        && request.resource.data.uid == request.auth.uid;
+    // إعداد أول مرة: يتم مرة واحدة فقط
+    match /config/setup {
+      allow get: if true;
+      allow create: if signedIn() && request.resource.data.adminUid == request.auth.uid;
       allow update, delete: if false;
     }
-    match /meta/public {
-      allow read: if true;
-      allow write: if isAdmin();
+    match /admins/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && !exists(/databases/$(database)/documents/config/setup)
+        && getAfter(/databases/$(database)/documents/config/setup).data.adminUid == uid;
+      allow update, delete: if false;
     }
 
-    // ---- الإعدادات: العامة للكل، والسرية (توكن واتساب) للمدير بس ----
-    match /settings/main {
+    match /settings/{id} {
       allow read: if signedIn();
       allow write: if isAdmin();
     }
-    match /settings/secret {
-      allow read, write: if isAdmin();
-    }
 
-    // ---- ربط حساب الدخول بالمحفظ/المشرفة ----
-    match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow create, update: if isAdmin()
-        || (isSup() && request.resource.data.role == 'teacher'
-            && get(/databases/$(database)/documents/teachers/$(request.resource.data.ref)).data.supervisorId == me());
-      allow delete: if isAdmin();
-    }
-
-    // ---- المشرفات ----
-    match /supervisors/{id} {
-      allow read: if isAdmin() || (isSup() && me() == id);
+    match /teachers/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
       allow write: if isAdmin();
     }
 
-    // ---- المحفظين ----
-    match /teachers/{id} {
-      allow read: if isAdmin()
-        || (isSup() && resource.data.supervisorId == me())
-        || (hasProfile() && profile().role == 'teacher' && me() == id);
-      allow create: if isAdmin() || (isSup() && request.resource.data.supervisorId == me());
-      allow update: if isAdmin()
-        || (isSup() && resource.data.supervisorId == me() && request.resource.data.supervisorId == me());
-      allow delete: if isAdmin();
-    }
-
-    // ---- الطلاب (supId = المشرفة الفعلية للطالب) ----
     match /students/{id} {
-      allow read: if isAdmin()
-        || (isSup() && resource.data.supId == me())
-        || (isTeacher() && resource.data.teacherId == me());
-      allow create: if isAdmin() || (isSup() && request.resource.data.supId == me());
-      allow update: if isAdmin()
-        || (isSup() && resource.data.supId == me() && request.resource.data.supId == me())
-        || (isTeacher() && resource.data.teacherId == me()
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['remaining', 'attended', 'absent', 'excused', 'status', 'expiredAt']));
-      allow delete: if isAdmin();
+      allow read: if isAdmin() || mine(resource.data);
+      allow create, delete: if isAdmin();
+      // المحفظ يغيّر فقط عدادات الحضور والرصيد (± محاضرة واحدة في كل مرة)
+      allow update: if isAdmin() || (mine(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['remaining', 'attended', 'absent', 'excused', 'status', 'expiredAt'])
+        && request.resource.data.remaining >= resource.data.remaining - 1
+        && request.resource.data.remaining <= resource.data.remaining + 1);
     }
 
-    // ---- المحاضرات + تقارير الحصص ----
     match /reports/{id} {
-      allow read: if isAdmin()
-        || (isSup() && resource.data.supId == me())
-        || (isTeacher() && resource.data.teacherId == me());
-      allow create: if isAdmin()
-        || (isSup() && request.resource.data.supId == me())
-        || (isTeacher() && request.resource.data.teacherId == me());
-      allow update: if isAdmin()
-        || (isSup() && resource.data.supId == me() && request.resource.data.supId == me())
-        || (isTeacher() && resource.data.teacherId == me() && request.resource.data.teacherId == me()
-            && groupStatus(resource.data) != 'sent');
-      allow delete: if isAdmin()
-        || (isSup() && resource.data.supId == me())
-        || (isTeacher() && resource.data.teacherId == me() && groupStatus(resource.data) != 'sent');
+      allow read: if isAdmin() || mine(resource.data);
+      allow create: if isAdmin() || (mine(request.resource.data)
+        && get(/databases/$(database)/documents/students/$(request.resource.data.studentId)).data.teacherUid == request.auth.uid);
+      allow update: if isAdmin();
+      // المحفظ يقدر يتراجع خلال 24 ساعة فقط
+      allow delete: if isAdmin() || (mine(resource.data) && request.time.toMillis() - resource.data.createdAt < 86400000);
     }
 
-    // ---- رسائل واتساب (تذكير الاشتراك) ----
     match /outbox/{id} {
-      allow read: if isAdmin() || (isTeacher() && resource.data.teacherId == me());
-      allow create: if isAdmin()
-        || (isTeacher() && request.resource.data.teacherId == me())
-        || (isSup() && request.resource.data.supId == me());
-      allow update: if isAdmin();
-      allow delete: if isAdmin()
-        || (isTeacher() && resource.data.teacherId == me() && resource.data.status == 'pending');
+      allow read, update: if isAdmin();
+      allow create: if isAdmin() || (signedIn() && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.kind in ['renew', 'eval'] && request.resource.data.status == 'pending');
+      allow delete: if isAdmin() || (signedIn() && resource.data.createdBy == request.auth.uid && resource.data.status == 'pending');
     }
   }
 }

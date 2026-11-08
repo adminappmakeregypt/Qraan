@@ -190,22 +190,11 @@ tr.sel td{background:var(--soft)}
 @media(max-width:1100px){.split .week{grid-template-columns:repeat(7,minmax(110px,1fr))}}
 .detail-card{border:2px solid var(--primary)}
 
-/* ===== تقارير الجروبات ===== */
-.gcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
-.gcard{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;border-right:5px solid var(--gold)}
-.gcard.opened{border-right-color:var(--warn)}
-.gcard.sent{border-right-color:var(--ok);background:#fbfdfb}
-.gcard-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
-.gcard-head b{font-size:17px}
-.gname{background:var(--soft);color:var(--primary-2);border-radius:10px;padding:10px 12px;font-weight:800;font-size:16px}
-.gact{display:flex;gap:8px;flex-wrap:wrap}
-.gact .btn.wa{flex:1;padding:12px;font-size:16px}
-details summary{cursor:pointer;color:var(--primary);font-weight:700}
-details .msg-preview{margin-top:8px;max-height:320px;overflow:auto}
-.rsec{font-weight:800;color:var(--primary);border-bottom:1px solid var(--line);padding-bottom:4px;margin:6px 0 10px}
-@media(max-width:600px){.gcards{grid-template-columns:1fr}}
-.checks{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px 12px}
-.checks label{font-weight:500;display:flex;gap:8px;align-items:center;margin:0}
-.checks input{width:auto}
-body.loading .main::before{content:'جارٍ تحميل البيانات...';display:block;text-align:center;color:var(--muted);padding:60px 0}
-body.loading .brand{visibility:hidden}
+/* Grade picker */
+.grades{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grade{font:inherit;font-weight:800;font-size:16px;padding:16px 10px;border-radius:14px;border:2px solid var(--line);background:#fff;cursor:pointer}
+.grade:hover{transform:translateY(-1px)}
+.grade.g0{border-color:#bfe3cd;background:#f1faf4;color:#0a7d3e}
+.grade.g1{border-color:#cfe6d9;background:#f6fbf8;color:#1e6b4a}
+.grade.g2{border-color:#efdcae;background:#fdf8ec;color:#8a6200}
+.grade.g3{border-color:#f0c9c4;background:#fdf3f2;color:#a3352a}

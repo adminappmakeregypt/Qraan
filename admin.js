@@ -1,70 +1,52 @@
-/* ===================== Qraan — لوحة المدير / المشرفة ===================== */
+/* ===================== Qraan — لوحة المدير ===================== */
 'use strict';
 
-// نفس اللوحة للمدير وللمشرفة — المشرفة تشوف وتعدل المحفظين والطلاب التابعين لها بس
 const db = Store.db;
 const S = db.settings;
-const IS_SUP = location.pathname.endsWith('supervisor.html');
-let ME = null;   // المشرفة الحالية (بعد تحميل البيانات)
-/** المحفظين والطلاب الظاهرين (للمشرفة: التابعين لها فقط) */
-const VT = () => IS_SUP ? db.teachers.filter(t => t.supervisorId === ME.id) : db.teachers;
-const VS = () => IS_SUP ? db.students.filter(s => effSupervisorId(s) === ME.id) : db.students;
-const ADMIN_ONLY = ['supervisors', 'outbox', 'settings'];
-let current = IS_SUP ? 'groups' : 'dashboard';
-const filters = { teacher: '', sup: '', status: '', country: '', q: '' };
+let current = 'dashboard';
+const filters = { teacher: '', status: '', country: '', q: '' };
 
-const grpScope = r => !IS_SUP || effSupervisorId(Store.student(r.studentId)) === ME.id;
-const views = { dashboard, assign, teachers, supervisors, students, schedule, reports, groups: () => groupReportsView(S.adminCountry, IS_SUP ? grpScope : null), outbox, settings };
-if (IS_SUP) {
-  $$('#nav button[data-tab]').forEach(b => { if (ADMIN_ONLY.includes(b.dataset.tab)) b.remove(); });
-  $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === current));
-}
-const editing = () => $('#modal') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+const views = { dashboard, assign, teachers, students, schedule, reports, outbox, settings };
 
 function go(tab) {
-  if (IS_SUP && ADMIN_ONLY.includes(tab)) return;
   current = tab;
   $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
 }
 function render() {
-  applyBrand();
   $('#main').innerHTML = views[current]();
   const pending = db.outbox.filter(m => m.status === 'pending').length;
-  $('#outBadge')?.classList.toggle('hidden', !pending); if ($('#outBadge')) $('#outBadge').textContent = pending;
-  const gr = groupReports().filter(r => grpScope(r) && r.group.status !== 'sent').length;
-  $('#grpBadge').textContent = gr; $('#grpBadge').classList.toggle('hidden', !gr);
-  $('#sideFoot').innerHTML = IS_SUP ? `${esc(ME.name)}<br>${esc(S.academy)}` : `${esc(S.academy)}<br><span dir="ltr">${esc(Store.profile?.email || '')}</span>`;
+  $('#outBadge').textContent = pending; $('#outBadge').classList.toggle('hidden', !pending);
+  $('#sideFoot').innerHTML = `${esc(S.academy)}<br><span dir="ltr">${esc(FB.auth?.currentUser?.email || '')}</span>`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
 const teacherName = id => esc(Store.teacher(id)?.name || '— بدون محفظ —');
 const teacherOptions = (sel, withEmpty = true) =>
   (withEmpty ? '<option value="">— اختر —</option>' : '') +
-  VT().map(t => `<option value="${t.id}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  db.teachers.map(t => `<option value="${t.id}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
 
 /* =============== الرئيسية =============== */
 function dashboard() {
-  const active = VS().filter(isActive);
-  const expired = VS().filter(s => !isActive(s));
+  const active = db.students.filter(isActive);
+  const expired = db.students.filter(s => !isActive(s));
   const low = active.filter(s => s.remaining <= 2);
   const todayIso = nowIn(S.adminCountry).iso;
-  const todayReports = db.reports.filter(r => (!IS_SUP || VT().some(t => t.id === r.teacherId)) && repWhen(r, S.adminCountry).iso === todayIso);
+  const todayReports = db.reports.filter(r => repWhen(r, S.adminCountry).iso === todayIso);
   const pending = db.outbox.filter(m => m.status === 'pending');
 
   // حلقات اليوم بتوقيت المدير
   const n = nowIn(S.adminCountry);
-  const today = VT().flatMap(t => teacherSessions(t.id, S.adminCountry, 0, 0)).sort((a, b) => a.ts - b.ts);
+  const today = db.teachers.flatMap(t => teacherSessions(t.id, S.adminCountry, 0, 0)).sort((a, b) => a.ts - b.ts);
 
   return `
   <div class="topbar"><h2>السلام عليكم 👋</h2><span class="muted">${DAYS[n.day]} — التوقيت: ${countryLabel(S.adminCountry)}</span></div>
   <div class="stats">
-    <div class="stat"><div class="n">${VT().length}</div><div class="l">محفظ</div></div>
+    <div class="stat"><div class="n">${db.teachers.length}</div><div class="l">محفظ</div></div>
     <div class="stat"><div class="n">${active.length}</div><div class="l">طالب اشتراكه مدفوع</div></div>
     <div class="stat danger"><div class="n">${expired.length}</div><div class="l">اشتراك منتهي</div></div>
     <div class="stat warn"><div class="n">${low.length}</div><div class="l">قارب على الانتهاء (≤ 2)</div></div>
     <div class="stat gold clickable" onclick="go('reports')"><div class="n">${todayReports.length}</div><div class="l">محاضرات سُجلت اليوم ←</div></div>
-    ${IS_SUP ? '' : `<div class="stat"><div class="n">${pending.length}</div><div class="l">رسائل في انتظار الإرسال</div></div>`}
-    <div class="stat warn clickable" onclick="grp.tab='ready';go('groups')"><div class="n">${groupReports().filter(r => grpScope(r) && r.group.status !== 'sent').length}</div><div class="l">تقارير جاهزة للجروبات ←</div></div>
+    <div class="stat"><div class="n">${pending.length}</div><div class="l">رسائل في انتظار الإرسال</div></div>
   </div>
   <div class="row">
     <div class="card"><h3>حلقات اليوم (بتوقيتك)</h3>
@@ -76,7 +58,7 @@ function dashboard() {
     <div class="card"><h3>اشتراكات تحتاج متابعة</h3>
       ${[...expired, ...low].length ? `<div class="table-wrap"><table><tr><th>الطالب</th><th>المتبقي</th><th>الحالة</th><th></th></tr>
         ${[...expired, ...low].map(s => `<tr><td>${esc(s.name)}<div class="muted small">${teacherName(s.teacherId)}</div></td><td>${s.remaining}</td><td>${statusPill(s)}</td>
-          <td>${IS_SUP ? '' : `<button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>`}</td></tr>`).join('')}
+          <td><button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button></td></tr>`).join('')}
       </table></div>` : '<div class="empty">كل الاشتراكات سليمة ✅</div>'}
     </div>
   </div>`;
@@ -91,9 +73,9 @@ const baseCountry = (k, st, t) => k === 'S' ? st.country : k === 'A' ? S.adminCo
 
 function teacherList(sel, onPick) {
   const q = asg.q.trim().toLowerCase();
-  const list = VT().filter(t => !q || (t.name + ' ' + t.username).toLowerCase().includes(q));
+  const list = db.teachers.filter(t => !q || (t.name + ' ' + t.username).toLowerCase().includes(q));
   return `<aside class="tlist">
-    <input placeholder="🔍 ابحث عن محفظ (${VT().length})" value="${esc(asg.q)}" oninput="asg.q=this.value;refreshTList()">
+    <input placeholder="🔍 ابحث عن محفظ (${db.teachers.length})" value="${esc(asg.q)}" oninput="asg.q=this.value;refreshTList()">
     <div class="tlist-items" id="tlistItems">${list.map(t => {
       const act = db.students.filter(s => s.teacherId === t.id && isActive(s)).length;
       return `<button class="${t.id === sel ? 'active' : ''}" onclick="${onPick}('${t.id}')"><b>${esc(t.name)}</b><span>${COUNTRIES[t.country].flag} ${act} طالب</span></button>`;
@@ -107,8 +89,8 @@ function refreshTList() {
 function pickAssign(id) { asg.teacher = id; asg.tz = ''; render(); }
 
 function assign() {
-  if (!VT().length) return '<div class="topbar"><h2>الجدول والحصص</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
-  if (!VT().some(t => t.id === asg.teacher)) asg.teacher = VT()[0].id;
+  if (!db.teachers.length) return '<div class="topbar"><h2>الجدول والحصص</h2></div><div class="card empty">أضف محفظًا أولًا من صفحة المحفظين.</div>';
+  if (!Store.teacher(asg.teacher)) asg.teacher = db.teachers[0].id;
   const t = Store.teacher(asg.teacher), view = asg.tz || t.country;
   const sts = db.students.filter(s => s.teacherId === t.id);
   const stt = teacherStats(t.id, S.adminCountry);
@@ -163,7 +145,7 @@ function assign() {
 function sessionModal(teacherId, day, studentId, slotIdx) {
   const t = Store.teacher(teacherId), editing = studentId != null && slotIdx != null;
   const st0 = studentId ? Store.student(studentId) : null;
-  const mine = db.students.filter(s => s.teacherId === teacherId), others = VS().filter(s => s.teacherId !== teacherId);
+  const mine = db.students.filter(s => s.teacherId === teacherId), others = db.students.filter(s => s.teacherId !== teacherId);
   const cur = editing ? convertSlot(st0.slots[slotIdx], st0.country, t.country) : { day, time: '17:00' };
   openModal(editing ? `تعديل حصة — ${esc(st0.name)}` : `حصة جديدة — ${esc(t.name)}`, `
     <form id="smf">
@@ -178,7 +160,6 @@ function sessionModal(teacherId, day, studentId, slotIdx) {
           <div class="field"><label>بلد الطالب</label><select name="ncountry">${countryOptions(t.country)}</select></div></div>
         <div class="row"><div class="field"><label>واتساب ولي الأمر</label><input name="nphone" dir="ltr"></div>
           <div class="field"><label>اسم ولي الأمر</label><input name="nparent"></div></div>
-        <div class="field"><label>اسم جروب واتساب</label><input name="ngroup" placeholder="مثال: قرآن | أحمد محمد"></div>
         <div class="row"><div class="field"><label>عدد محاضرات الباقة</label><input name="ntotal" type="number" min="1" value="${S.defaultLectures}"></div>
           <div class="field"><label>مدة الحصة (دقيقة)</label><input name="ndur" type="number" min="10" step="5" value="30"></div></div>
       </div>
@@ -219,7 +200,7 @@ function sessionModal(teacherId, day, studentId, slotIdx) {
       const n = Math.max(1, +f.ntotal.value || S.defaultLectures);
       st = { id: uid(), createdAt: Date.now(), name: f.nname.value.trim(), parentName: f.nparent.value.trim(), parentPhone: f.nphone.value.trim(),
         country: f.ncountry.value, teacherId: t.id, total: n, remaining: n, status: 'paid', attended: 0, absent: 0, excused: 0, renewals: [],
-        notes: '', link: '', duration: Math.max(10, +f.ndur.value || 30), slots: [], groupName: f.ngroup.value.trim() };
+        notes: '', link: '', duration: Math.max(10, +f.ndur.value || 30), slots: [] };
       db.students.push(st);
     } else if (st.teacherId !== t.id) st.teacherId = t.id;
     const p = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false, null);
@@ -291,12 +272,12 @@ function topUpForm(id) {
 
 function moveStudentForm(toTeacher, studentId) {
   const st = studentId ? Store.student(studentId) : null;
-  const candidates = VS().filter(s => s.teacherId !== toTeacher);
+  const candidates = db.students.filter(s => s.teacherId !== toTeacher);
   openModal(st ? `نقل ${esc(st.name)} لمحفظ آخر` : 'تعيين طالب حالي لهذا المحفظ', `
     <form id="mvf">
       ${st ? '' : `<div class="field"><label>الطالب</label><select name="sid" required><option value="">— اختر —</option>
         ${candidates.map(s => `<option value="${s.id}">${esc(s.name)} — ${s.teacherId ? 'حاليًا مع ' + teacherName(s.teacherId) : 'بدون محفظ'}</option>`).join('')}</select></div>`}
-      <div class="field"><label>المحفظ الجديد</label><select name="tid" required>${VT().filter(x => !st || x.id !== st.teacherId).map(x => `<option value="${x.id}" ${x.id === toTeacher ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>المحفظ الجديد</label><select name="tid" required>${db.teachers.filter(x => !st || x.id !== st.teacherId).map(x => `<option value="${x.id}" ${x.id === toTeacher ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
       <p class="muted small">المحاضرات المسجلة سابقًا تبقى في سجل المحفظ القديم. المواعيد تنتقل كما هي.</p>
     </form>`,
     `<button class="btn" form="mvf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
@@ -323,11 +304,11 @@ function removeExtra(id, eid) {
 function teachers() {
   return `
   <div class="topbar"><h2>المحفظين</h2><button class="btn" onclick="teacherForm()">+ إضافة محفظ</button></div>
-  ${VT().length ? `<div class="table-wrap"><table>
-    <tr><th>الاسم</th><th>المشرفة</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>البلد</th><th>الهاتف</th><th>الطلاب</th><th>محاضرات الشهر</th><th>إجمالي المحاضرات</th><th>الحالة</th><th></th></tr>
-    ${VT().map(t => {
+  ${db.teachers.length ? `<div class="table-wrap"><table>
+    <tr><th>الاسم</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>البلد</th><th>الهاتف</th><th>الطلاب</th><th>محاضرات الشهر</th><th>إجمالي المحاضرات</th><th>الحالة</th><th></th></tr>
+    ${db.teachers.map(t => {
       const sts = db.students.filter(s => s.teacherId === t.id), ts = teacherStats(t.id, S.adminCountry);
-      return `<tr><td><b>${esc(t.name)}</b></td><td>${t.supervisorId ? esc(supervisorName(t.supervisorId)) : '<span class="pill warn">بدون مشرفة</span>'}</td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
+      return `<tr><td><b>${esc(t.name)}</b></td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
       <td>${countryLabel(t.country)}</td><td dir="ltr" style="text-align:right">${esc(t.phone || '—')}</td>
       <td>${sts.filter(isActive).length} نشط / ${sts.length}</td>
       <td><b>${ts.month}</b></td><td>${ts.total} <span class="muted small">(✅ ${ts.present} · ❌ ${ts.absent})</span></td>
@@ -337,137 +318,87 @@ function teachers() {
         <button class="btn sm ghost" onclick="filters.teacher='${t.id}';go('students')">طلابه</button>
         <button class="btn sm ghost" onclick="lec.teacher='${t.id}';go('reports')">محاضراته</button>
         <button class="btn sm" onclick="asg.teacher='${t.id}';go('assign')">الجدول</button>
-        ${IS_SUP ? '' : `<button class="btn sm danger" onclick="delTeacher('${t.id}')">حذف</button>`}</div></td></tr>`;
+        <button class="btn sm danger" onclick="delTeacher('${t.id}')">حذف</button></div></td></tr>`;
     }).join('')}
   </table></div>` : '<div class="card empty">لا يوجد محفظين بعد — ابدأ بإضافة أول محفظ.</div>'}`;
 }
 
-function teacherForm(id, presetSup) {
-  const t = id ? Store.teacher(id) : { name: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), country: 'EG', phone: '', active: true, supervisorId: presetSup || (IS_SUP ? ME.id : '') };
+function teacherForm(id) {
+  const t = id ? Store.teacher(id) : { name: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), country: 'EG', phone: '', active: true };
   openModal(id ? 'تعديل محفظ' : 'إضافة محفظ', `
     <form id="tf">
       <div class="field"><label>الاسم</label><input name="name" required value="${esc(t.name)}"></div>
       <div class="row">
-        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(t.username)}" ${t.uid ? 'readonly title="لا يمكن تغييره بعد إنشاء الحساب"' : ''}></div>
+        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(t.username)}" ${id ? 'disabled title="لا يمكن تغيير اسم المستخدم بعد الإنشاء"' : ''}></div>
         <div class="field"><label>رقم الدخول (بدون كلمة سر)</label><input name="code" required inputmode="numeric" pattern="[0-9]{3,10}" value="${esc(t.code)}"></div>
       </div>
       <div class="row">
         <div class="field"><label>البلد</label><select name="country">${countryOptions(t.country)}</select></div>
         <div class="field"><label>الهاتف</label><input name="phone" value="${esc(t.phone)}"></div>
       </div>
-      <div class="field ${IS_SUP ? 'hidden' : ''}"><label>المشرفة</label><select name="supervisorId">${IS_SUP ? `<option value="${ME.id}" selected>${esc(ME.name)}</option>` : supervisorOptions(t.supervisorId)}</select>
-        <p class="muted small" style="margin:2px 0 0">كل طلاب المحفظ بيتبعوا مشرفته تلقائيًا (إلا لو طالب له مشرفة مختلفة).</p></div>
       <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${t.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
     </form>`,
     `<button class="btn" form="tf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
-  $('#tf').onsubmit = e => {
+  $('#tf').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
-    const uname = f.username.trim();
-    if (usernameTaken(uname, id)) return toast('اسم المستخدم مستخدم بالفعل', true);
-    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), active: !!f.active, supervisorId: f.supervisorId || '' };
-    if (id) Object.assign(t, data); else db.teachers.push({ id: uid(), createdAt: Date.now(), ...data });
+    const uname = (f.username || t.username).trim();
+    if (!id && db.teachers.some(x => x.username.toLowerCase() === uname.toLowerCase())) return toast('اسم المستخدم مستخدم بالفعل', true);
+    const btn = $('.modal .foot .btn'); btn.disabled = true; btn.textContent = 'جارٍ الحفظ...';
+    const oldCode = id ? t.code : null;
+    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), active: !!f.active };
+    const target = id ? { ...t, ...data } : { id: uid(), createdAt: Date.now(), ...data };
+    try { await ensureTeacherAuth(target, oldCode); }
+    catch (err) {
+      btn.disabled = false; btn.textContent = 'حفظ';
+      return toast(err.code === 'auth/email-already-in-use' ? 'اسم المستخدم مستخدم بالفعل' : 'تعذر إنشاء حساب الدخول: ' + err.message, true);
+    }
+    if (id) Object.assign(t, target); else db.teachers.push(target);
     Store.save(); closeModal(); toast('تم الحفظ'); render();
   };
 }
 function delTeacher(id) {
   const n = db.students.filter(s => s.teacherId === id).length;
   if (!confirmBox(n ? `هذا المحفظ لديه ${n} طالب — سيصبحون بدون محفظ. متابعة؟` : 'حذف المحفظ؟')) return;
+  const t = Store.teacher(id);
   db.students.forEach(s => { if (s.teacherId === id) s.teacherId = ''; });
   db.teachers = db.teachers.filter(t => t.id !== id);
   Store.save(); render();
-}
-
-/* =============== المشرفات =============== */
-function supervisors() {
-  return `
-  <div class="topbar"><h2>المشرفات</h2><button class="btn" onclick="supervisorForm()">+ إضافة مشرفة</button></div>
-  <p class="muted small">المشرفة تدخل بـ «اسم المستخدم + الرقم» وتشوف تقارير الحصص الجاهزة وتبعتها للجروبات من واتساب موبايلها.</p>
-  ${db.supervisors.length ? `<div class="table-wrap"><table>
-    <tr><th>الاسم</th><th>المحفظين التابعين</th><th>الطلاب</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>الهاتف</th><th>تقارير أرسلتها</th><th>الحالة</th><th></th></tr>
-    ${db.supervisors.map(u => { const ts = db.teachers.filter(t => t.supervisorId === u.id), sts = db.students.filter(st => effSupervisorId(st) === u.id);
-      return `<tr><td><b>${esc(u.name)}</b></td>
-      <td><div class="chips">${ts.map(t => `<span class="chip">${esc(t.name)}</span>`).join('') || '<span class="muted small">—</span>'}</div></td>
-      <td>${sts.length}</td><td dir="ltr" style="text-align:right">${esc(u.username)}</td><td><code>${esc(u.code)}</code></td>
-      <td dir="ltr" style="text-align:right">${esc(u.phone || '—')}</td>
-      <td>${groupReports().filter(r => r.group.status === 'sent' && r.group.sentBy?.id === u.id).length}</td>
-      <td>${u.active === false ? '<span class="pill gray">موقوف</span>' : '<span class="pill ok">فعال</span>'}</td>
-      <td><div class="actions"><button class="btn sm ghost" onclick="supervisorForm('${u.id}')">تعديل</button>
-        <button class="btn sm ghost" onclick="teacherForm('', '${u.id}')">+ محفظ جديد تحتها</button>
-        <button class="btn sm ghost" onclick="filters.sup='${u.id}';go('students')">طلابها</button>
-        <button class="btn sm danger" onclick="delSupervisor('${u.id}')">حذف</button></div></td></tr>`; }).join('')}
-  </table></div>` : '<div class="card empty">لا توجد مشرفات بعد.</div>'}`;
-}
-function supervisorForm(id) {
-  const u = id ? Store.supervisor(id) : { name: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), phone: '', active: true };
-  openModal(id ? 'تعديل مشرفة' : 'إضافة مشرفة', `
-    <form id="uf">
-      <div class="field"><label>الاسم</label><input name="name" required value="${esc(u.name)}"></div>
-      <div class="row">
-        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(u.username)}" ${u.uid ? 'readonly title="لا يمكن تغييره بعد إنشاء الحساب"' : ''}></div>
-        <div class="field"><label>رقم الدخول</label><input name="code" required inputmode="numeric" pattern="[0-9]{3,10}" value="${esc(u.code)}"></div>
-      </div>
-      <div class="field"><label>الهاتف</label><input name="phone" dir="ltr" value="${esc(u.phone)}"></div>
-      <div class="field"><label>المحفظين التابعين لها</label>
-        ${db.teachers.length ? `<div class="checks">${db.teachers.map(t => `<label><input type="checkbox" name="tch" value="${t.id}" ${id && t.supervisorId === id ? 'checked' : ''}>
-          ${esc(t.name)} ${t.supervisorId && t.supervisorId !== id ? `<span class="muted small">(حاليًا مع ${esc(supervisorName(t.supervisorId))} — هيتنقل)</span>` : ''}</label>`).join('')}</div>` : '<p class="muted small">لا يوجد محفظين بعد.</p>'}</div>
-      <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${u.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
-    </form>`,
-    `<button class="btn" form="uf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
-  $('#uf').onsubmit = e => {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target)), uname = f.username.trim();
-    if (usernameTaken(uname, id)) return toast('اسم المستخدم مستخدم بالفعل', true);
-    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), phone: f.phone.trim(), active: !!f.active };
-    let sid = id;
-    if (id) Object.assign(u, data); else { sid = uid(); db.supervisors.push({ id: sid, createdAt: Date.now(), ...data }); }
-    const picked = new Set($$('#uf [name=tch]:checked').map(x => x.value));
-    db.teachers.forEach(t => { if (picked.has(t.id)) t.supervisorId = sid; else if (t.supervisorId === sid) t.supervisorId = ''; });
-    Store.save(); closeModal(); toast('تم الحفظ'); render();
-  };
-}
-function delSupervisor(id) {
-  if (!confirmBox('حذف المشرفة؟ المحفظين والطلاب التابعين لها هيبقوا بدون مشرفة (سجل التقارير يفضل موجود)')) return;
-  db.supervisors = db.supervisors.filter(u => u.id !== id);
-  db.teachers.forEach(t => { if (t.supervisorId === id) t.supervisorId = ''; });
-  db.students.forEach(st => { if (st.supervisorId === id) st.supervisorId = ''; });
-  Store.save(); render();
+  if (t) deleteTeacherAuth(t);
 }
 
 /* =============== الطلاب =============== */
 function students() {
   const q = filters.q.trim().toLowerCase();
-  const list = VS().filter(s =>
+  const list = db.students.filter(s =>
     (!filters.teacher || s.teacherId === filters.teacher) &&
-    (!filters.sup || effSupervisorId(s) === (filters.sup === 'none' ? '' : filters.sup)) &&
     (!filters.country || s.country === filters.country) &&
     (!filters.status || (filters.status === 'paid' ? isActive(s) : !isActive(s))) &&
-    (!q || (s.name + ' ' + s.parentName + ' ' + s.parentPhone + ' ' + (s.groupName || '')).toLowerCase().includes(q)));
+    (!q || (s.name + ' ' + s.parentName + ' ' + s.parentPhone).toLowerCase().includes(q)));
   return `
-  <div class="topbar"><h2>الطلاب</h2><button class="btn" onclick="studentForm()" ${VT().length ? '' : 'disabled title="أضف محفظًا أولًا"'}>+ إضافة طالب</button></div>
+  <div class="topbar"><h2>الطلاب</h2><button class="btn" onclick="studentForm()" ${db.teachers.length ? '' : 'disabled title="أضف محفظًا أولًا"'}>+ إضافة طالب</button></div>
   <div class="toolbar">
     <input placeholder="بحث بالاسم أو ولي الأمر أو الهاتف" value="${esc(filters.q)}" oninput="filters.q=this.value;debounceRender()">
     <select onchange="filters.teacher=this.value;render()"><option value="">كل المحفظين</option>${teacherOptions(filters.teacher, false)}</select>
-    <select class="${IS_SUP ? 'hidden' : ''}" onchange="filters.sup=this.value;render()"><option value="">كل المشرفات</option>${db.supervisors.map(u => `<option value="${u.id}" ${u.id === filters.sup ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}<option value="none" ${filters.sup === 'none' ? 'selected' : ''}>بدون مشرفة</option></select>
     <select onchange="filters.status=this.value;render()">
       <option value="">كل الحالات</option><option value="paid" ${filters.status === 'paid' ? 'selected' : ''}>مدفوع</option><option value="expired" ${filters.status === 'expired' ? 'selected' : ''}>منتهي</option></select>
     <select onchange="filters.country=this.value;render()"><option value="">كل الدول</option>${countryOptions(filters.country)}</select>
   </div>
   ${list.length ? `<div class="table-wrap"><table>
-    <tr><th>الطالب</th><th>ولي الأمر</th><th>المحفظ / المشرفة</th><th>المواعيد (توقيت الطالب)</th><th>المتبقي</th><th>الحضور</th><th>الاشتراك</th><th></th></tr>
+    <tr><th>الطالب</th><th>ولي الأمر</th><th>المحفظ</th><th>المواعيد (توقيت الطالب)</th><th>المتبقي</th><th>الحضور</th><th>الاشتراك</th><th></th></tr>
     ${list.map(s => `<tr>
-      <td><b>${esc(s.name)}</b><div class="muted small">${countryLabel(s.country)}</div><div class="small">${s.groupName ? '👥 ' + esc(s.groupName) : '<span style="color:var(--danger)">بدون جروب</span>'}</div></td>
+      <td><b>${esc(s.name)}</b><div class="muted small">${countryLabel(s.country)}</div></td>
       <td>${esc(s.parentName || '—')}<div class="small" dir="ltr" style="text-align:right">${esc(s.parentPhone)}</div></td>
-      <td>${teacherName(s.teacherId)}<div class="small">👩‍💼 ${effSupervisorId(s) ? esc(supervisorName(effSupervisorId(s))) : '<span style="color:var(--danger)">بدون مشرفة</span>'}${s.supervisorId ? ' <span class="muted">(خاصة بالطالب)</span>' : ''}</div></td>
+      <td>${teacherName(s.teacherId)}</td>
       <td><div class="list-slots">${isActive(s) ? (slotsIn(s, s.country).map(x => `<span>${fmtSlot(x)}</span>`).join('') || '<span class="muted">لا مواعيد</span>') : '<span class="muted">موقوفة لحين التجديد</span>'}</div></td>
       <td>${meter(s)}</td>
       <td class="small">✅ ${s.attended || 0}<br>❌ ${s.absent || 0}<br>🟡 ${s.excused || 0}</td>
       <td>${statusPill(s)}</td>
       <td><div class="actions">
         <button class="btn sm ghost" onclick="studentForm('${s.id}')">تعديل</button>
-        ${IS_SUP ? '' : `<button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>`}
+        <button class="btn sm gold" onclick="renewForm('${s.id}')">تجديد</button>
         <button class="btn sm ghost" onclick="studentLog('${s.id}')">السجل</button>
-        ${IS_SUP ? '' : `<button class="btn sm danger" onclick="delStudent('${s.id}')">حذف</button>`}</div></td>
+        <button class="btn sm danger" onclick="delStudent('${s.id}')">حذف</button></div></td>
     </tr>`).join('')}
   </table></div>` : '<div class="card empty">لا يوجد طلاب مطابقين.</div>'}`;
 }
@@ -507,11 +438,7 @@ function studentForm(id, presetTeacher) {
         <div class="field"><label>اسم ولي الأمر</label><input name="parentName" value="${esc(s.parentName)}"></div>
         <div class="field"><label>واتساب ولي الأمر</label><input name="parentPhone" required dir="ltr" placeholder="05xxxxxxxx أو 01xxxxxxxxx" value="${esc(s.parentPhone)}"></div>
       </div>
-      <div class="row">
-        <div class="field"><label>المحفظ</label><select name="teacherId" required>${teacherOptions(s.teacherId)}</select></div>
-        <div class="field ${IS_SUP ? 'hidden' : ''}"><label>المشرفة</label><select name="supervisorId" id="stSup"></select></div>
-      </div>
-      <div class="field"><label>اسم جروب واتساب (زي ما هو في واتساب)</label><input name="groupName" placeholder="مثال: قرآن | أحمد محمد" value="${esc(s.groupName || '')}"></div>
+      <div class="field"><label>المحفظ</label><select name="teacherId" required>${teacherOptions(s.teacherId)}</select></div>
       <div class="row3">
         <div class="field"><label>عدد محاضرات الباقة</label><input name="total" type="number" min="1" value="${s.total}"></div>
         <div class="field"><label>المحاضرات المتبقية</label><input name="remaining" type="number" min="0" value="${s.remaining}"></div>
@@ -530,13 +457,6 @@ function studentForm(id, presetTeacher) {
     </form>`,
     `<button class="btn" form="sf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
   const f = $('#sf');
-  // المشرفة: الافتراضي «مشرفة المحفظ» (تتغير معاه)، أو اختيار مشرفة مختلفة للطالب ده بس
-  const supSel = () => {
-    const tSup = Store.teacher(f.teacherId.value)?.supervisorId || '', cur = f.supervisorId.value || s.supervisorId || '';
-    f.supervisorId.innerHTML = `<option value="">تبع المحفظ — ${tSup ? esc(supervisorName(tSup)) : 'المحفظ بدون مشرفة'}</option>` +
-      db.supervisors.filter(u => u.id !== tSup).map(u => `<option value="${u.id}" ${u.id === cur ? 'selected' : ''}>${esc(u.name)} (للطالب ده بس)</option>`).join('');
-  };
-  f.teacherId.addEventListener('change', supSel); supSel();
   f.addEventListener('input', slotPreview); f.addEventListener('change', slotPreview); slotPreview();
   f.onsubmit = e => {
     e.preventDefault();
@@ -544,8 +464,7 @@ function studentForm(id, presetTeacher) {
     const data = {
       name: d.name.trim(), parentName: d.parentName.trim(), parentPhone: d.parentPhone.trim(), country: d.country, teacherId: d.teacherId,
       total: Math.max(1, +d.total || 1), remaining: Math.max(0, +d.remaining || 0), notes: d.notes.trim(), slots: readSlots(),
-      link: d.link.trim(), duration: Math.max(10, +d.duration || 30), groupName: (d.groupName || '').trim(),
-      supervisorId: IS_SUP ? '' : (d.supervisorId && d.supervisorId !== Store.teacher(d.teacherId)?.supervisorId ? d.supervisorId : ''),
+      link: d.link.trim(), duration: Math.max(10, +d.duration || 30),
     };
     if (!id || JSON.stringify(s.slots) !== JSON.stringify(data.slots)) data.slotsAt = Date.now();
     data.status = data.remaining <= 0 ? 'expired' : d.status;
@@ -594,8 +513,8 @@ function studentLog(id) {
       <div class="stat gold"><div class="n">${s.remaining}</div><div class="l">متبقي</div></div>
     </div>
     ${(s.renewals || []).length ? `<p class="small muted">التجديدات: ${s.renewals.map(r => `${fmtDate(r.date)} (${r.lectures})`).join(' · ')}</p>` : ''}
-    ${reps.length ? `<div class="table-wrap"><table><tr><th>التاريخ</th><th>الوقت</th><th>المحفظ</th><th>الحضور</th><th>رقم المحاضرة</th><th>المتبقي</th></tr>
-      ${reps.map(r => { const w = repWhen(r, S.adminCountry); return `<tr><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td><td>${teacherName(r.teacherId)}</td><td>${attPill(r)}</td><td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td></tr>`; }).join('')}
+    ${reps.length ? `<div class="table-wrap"><table><tr><th>التاريخ</th><th>الوقت</th><th>المحفظ</th><th>الحضور</th><th>التقييم</th><th>رقم المحاضرة</th><th>المتبقي</th></tr>
+      ${reps.map(r => { const w = repWhen(r, S.adminCountry); return `<tr><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td><td>${teacherName(r.teacherId)}</td><td>${attPill(r)}</td><td>${esc(r.grade || '—')}</td><td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td></tr>`; }).join('')}
     </table></div>` : '<div class="empty">لا توجد محاضرات مسجلة</div>'}`);
 }
 
@@ -613,7 +532,7 @@ function schedule() {
   const view = schedCountry || S.adminCountry;
   const n = nowIn(view);
   const days = DAYS.map(() => []);
-  VS().filter(isActive).filter(s => !schedTeacher || s.teacherId === schedTeacher)
+  db.students.filter(isActive).filter(s => !schedTeacher || s.teacherId === schedTeacher)
     .forEach(st => slotsIn(st, view).forEach(x => days[x.day].push({ st, x })));
   days.forEach(d => d.sort((a, b) => slotMin(a.x) - slotMin(b.x)));
   return `
@@ -637,20 +556,19 @@ function pickLec(id) { lec.teacher = id; lec.student = ''; render(); setTimeout(
 function reports() {
   const C = S.adminCountry, nowM = nowIn(C).iso.slice(0, 7);
   if (!lec.month) lec.month = nowM;
-  const all = db.reports.filter(r => !IS_SUP || VT().some(t => t.id === r.teacherId)).map(r => ({ r, w: repWhen(r, C) }));
+  const all = db.reports.map(r => ({ r, w: repWhen(r, C) }));
   const months = [...new Set([nowM, ...all.map(x => x.w.iso.slice(0, 7))])].sort().reverse();
   const inMonth = lec.month === 'all' ? all : all.filter(x => x.w.iso.startsWith(lec.month));
   const now = Date.now();
 
   // ملخص كل المحفظين
   const q = lec.q.trim().toLowerCase();
-  let sum = VT().filter(t => !q || t.name.toLowerCase().includes(q)).map(t => {
+  let sum = db.teachers.filter(t => !q || t.name.toLowerCase().includes(q)).map(t => {
     const rs = inMonth.filter(x => x.r.teacherId === t.id);
     const p = rs.filter(x => x.r.attendance === 'present').length;
     const missed = lec.month === nowM ? teacherSessions(t.id, C, 31, 0).filter(o => !o.rec && o.ts < now && o.date.startsWith(nowM)).length : 0;
     const last = rs.sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt))[0];
-    const gs = rs.filter(x => x.r.group);
-    return { t, n: rs.length, p, a: rs.length - p, missed, gSent: gs.filter(x => x.r.group.status === 'sent').length, gReady: gs.filter(x => x.r.group.status !== 'sent').length, students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
+    return { t, n: rs.length, p, a: rs.length - p, missed, students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
       active: db.students.filter(s => s.teacherId === t.id && isActive(s)).length };
   });
   const sorters = { done: (a, b) => b.n - a.n, name: (a, b) => a.t.name.localeCompare(b.t.name, 'ar'), missed: (a, b) => b.missed - a.missed };
@@ -676,13 +594,12 @@ function reports() {
   </div>
   ${T ? lecDetail(T, inMonth, nowM) : '<p class="muted small">اضغط «التفاصيل» أمام أي محفظ لعرض محاضراته وتعديلها.</p>'}
   <div class="table-wrap"><table>
-    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>تقارير اتبعت للجروب</th><th>آخر محاضرة</th><th></th></tr>
+    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>آخر محاضرة</th><th></th></tr>
     ${sum.map(x => `<tr class="${x.t.id === lec.teacher ? 'sel' : ''}"><td><b>${esc(x.t.name)}</b><div class="muted small">${countryLabel(x.t.country)}</div></td><td>${x.active}</td>
       <td><b style="font-size:17px">${x.n}</b></td><td>${x.p}</td><td>${x.a}</td>
       <td>${x.missed ? `<span class="pill warn">${x.missed}</span>` : '—'}</td>
-      <td>${x.gSent}${x.gReady ? ` <span class="pill gold">${x.gReady} جاهز</span>` : ''}</td>
       <td class="small">${x.last ? `${fmtDayDate(x.last.iso)}${x.last.time ? ' ' + fmtTime(x.last.time) : ''}` : '—'}</td>
-      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">لا نتائج</td></tr>'}
+      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">لا نتائج</td></tr>'}
   </table></div>
 `;
 }
@@ -703,11 +620,12 @@ function lecDetail(T, inMonth, nowM) {
       ${_missed.map((o, i) => `<div class="miss-row"><span>${fmtDayDate(o.date)} · ${fmtTime(o.time)} — <b>${esc(o.st.name)}</b></span>
         <span><button class="btn sm" onclick="adminRecord(${i},'present')">✅ حضر</button> <button class="btn sm danger" onclick="adminRecord(${i},'absent')">❌ لم يحضر</button></span></div>`).join('')}</div>` : ''}
     ${rows.length ? `<div class="table-wrap"><table>
-      <tr><th>اليوم والتاريخ</th><th>الوقت</th><th>الطالب</th><th>الحضور (قابل للتعديل)</th><th>رقم المحاضرة</th><th>المتبقي</th><th>سُجلت</th><th></th></tr>
+      <tr><th>اليوم والتاريخ</th><th>الوقت</th><th>الطالب</th><th>الحضور (قابل للتعديل)</th><th>التقييم</th><th>رقم المحاضرة</th><th>المتبقي</th><th>سُجلت</th><th></th></tr>
       ${rows.map(({ r, w }) => `<tr><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td><td>${esc(Store.student(r.studentId)?.name || '—')}</td>
         <td><select class="att-sel ${r.attendance === 'present' ? 'ok' : 'bad'}" onchange="adminEdit('${r.id}',this.value)">
           <option value="present" ${r.attendance === 'present' ? 'selected' : ''}>✅ حضر</option><option value="absent" ${r.attendance !== 'present' ? 'selected' : ''}>❌ لم يحضر</option></select>
           ${r.editedAt ? '<div class="muted small">عُدلت من المدير</div>' : r.byAdmin ? '<div class="muted small">سجلها المدير</div>' : ''}</td>
+        <td>${esc(r.grade || '—')}${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td>
         <td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td><td class="small muted">${fmtDateTime(r.createdAt)}</td>
         <td><button class="btn sm danger" onclick="adminUndo('${r.id}')">حذف</button></td></tr>`).join('')}
     </table></div>` : '<div class="empty">لا توجد محاضرات مسجلة في هذه الفترة.</div>'}
@@ -718,7 +636,7 @@ function adminRecord(i, att) {
   const o = _missed[i]; if (!o) return;
   try {
     const { rep, msgs } = recordSession(o.st, Store.teacher(o.st.teacherId), o, att); rep.byAdmin = true; Store.save(); render();
-    if (msgs.length) deliver(msgs[0]).then(r => { toast(r === 'sent' ? 'آخر محاضرة — أُرسل تذكير الاشتراك ✅' : 'آخر محاضرة — الرسالة في صندوق واتساب', r === 'failed'); render(); });
+    if (msgs.length) toast(S.waMode === 'api' ? 'آخر محاضرة — جارٍ إرسال تذكير الاشتراك لولي الأمر' : 'آخر محاضرة — الرسالة في صندوق واتساب');
     else toast('تم التسجيل');
   }
   catch (e) { toast(e.message, true); }
@@ -730,7 +648,7 @@ function adminUndo(id) {
 function exportLectures() {
   const C = S.adminCountry;
   const rows = [['التاريخ', 'الوقت', 'المحفظ', 'الطالب', 'الحضور', 'رقم المحاضرة', 'المتبقي']];
-  db.reports.filter(r => (!IS_SUP || VT().some(t => t.id === r.teacherId)) && (!lec.teacher || r.teacherId === lec.teacher) && (!lec.student || r.studentId === lec.student))
+  db.reports.filter(r => (!lec.teacher || r.teacherId === lec.teacher) && (!lec.student || r.studentId === lec.student))
     .map(r => ({ r, w: repWhen(r, C) })).filter(x => !lec.month || lec.month === 'all' || x.w.iso.startsWith(lec.month))
     .sort((a, b) => (a.r.sessionTs || a.r.createdAt) - (b.r.sessionTs || b.r.createdAt))
     .forEach(({ r, w }) => rows.push([w.iso, w.time, Store.teacher(r.teacherId)?.name || '', Store.student(r.studentId)?.name || '', ATT[r.attendance], r.lectureNo || '', r.remainingAfter]));
@@ -751,32 +669,34 @@ function outbox() {
     <div class="seg" style="margin:0;min-width:260px"><button class="${outTab === 'pending' ? 'active' : ''}" onclick="outTab='pending';render()">لم تُرسل (${pc})</button><button class="${outTab === 'sent' ? 'active' : ''}" onclick="outTab='sent';render()">المُرسلة</button></div></div>
   <div class="note">${api ? '✅ الإرسال التلقائي عبر WhatsApp Business API مفعّل — الرسالة تُرسل لولي الأمر فور تسجيل آخر محاضرة في الباقة. هنا تظهر الرسائل التي فشل إرسالها لإعادة المحاولة.'
     : '⚠️ الإرسال التلقائي غير مفعّل — فعّله من «الإعدادات ← ربط واتساب». حاليًا تُرسل الرسالة يدويًا بزر واتساب.'}
-    <br><span class="small">الرسالة الوحيدة: تُرسل لولي الأمر عند انتهاء آخر محاضرة في الباقة.</span></div>
+    <br><span class="small">الرسائل: تقييم الحصة بعد كل «حضر» + تذكير الاشتراك عند آخر محاضرة في الباقة.</span></div>
   ${pc > 1 && api && outTab === 'pending' ? `<button class="btn" style="margin-bottom:12px" onclick="retryAll()">إعادة إرسال الكل (${pc})</button>` : ''}
   ${list.length ? list.map(m => `<div class="card">
       <div class="topbar" style="margin-bottom:8px"><div>${kindPill(m.kind)} <b>${esc(m.studentName)}</b> <span class="muted small" dir="ltr">+${esc(m.phone)}</span></div>
       <span class="muted small">${fmtDateTime(m.sentAt || m.createdAt)}${m.via === 'api' ? ' · عبر API' : m.status === 'sent' ? ' · يدوي' : ''}</span></div>
       <div class="msg-preview">${esc(m.text)}</div>
-      ${m.error ? `<div class="note small" style="background:var(--danger-soft);border-color:#f0c9c4;margin:8px 0 0">فشل الإرسال: ${esc(m.error)}</div>` : ''}
+      ${m.error ? `<div class="note small" style="background:var(--danger-soft);border-color:#f0c9c4;margin:8px 0 0">فشل الإرسال: ${esc(m.error)}</div>`
+        : api && m.status === 'pending' ? '<div class="muted small" style="margin-top:6px">⏳ جارٍ الإرسال من السيرفر...</div>' : ''}
       <div class="actions" style="display:flex;gap:6px;margin-top:10px">
-        ${api && m.status === 'pending' ? `<button class="btn sm" onclick="retryOne('${m.id}')">إرسال عبر API</button>` : ''}
+        ${api && m.status === 'pending' ? `<button class="btn sm" onclick="retryOne('${m.id}')">${m.error ? 'إعادة المحاولة' : 'إرسال عبر API'}</button>` : ''}
         <button class="btn sm wa" onclick="sendWhatsApp('${m.id}');render()">${m.status === 'sent' ? 'إعادة الإرسال يدويًا' : 'إرسال يدوي (واتساب)'}</button>
         ${m.status === 'pending' ? `<button class="btn sm ghost" onclick="markSent('${m.id}');render()">تم الإرسال</button>` : ''}
         <button class="btn sm danger" onclick="delMsg('${m.id}')">حذف</button>
       </div></div>`).join('') : '<div class="card empty">لا توجد رسائل.</div>'}`;
 }
 function delMsg(id) { db.outbox = db.outbox.filter(m => m.id !== id); Store.save(); render(); }
-async function retryOne(id) {
+function retryOne(id) {
   const m = db.outbox.find(x => x.id === id); if (!m) return;
-  const r = await deliver(m); toast(r === 'sent' ? 'تم الإرسال ✅' : 'فشل: ' + (m.error || ''), r !== 'sent'); render();
+  retrySend(m); toast('جارٍ إعادة الإرسال...'); render();
 }
-async function retryAll() {
-  let ok = 0; for (const m of db.outbox.filter(x => x.status === 'pending')) if (await deliver(m) === 'sent') ok++;
-  toast(`تم إرسال ${ok} رسالة`); render();
+function retryAll() {
+  const list = db.outbox.filter(x => x.status === 'pending'); list.forEach(m => { m.status = 'pending'; m.retryAt = Date.now(); delete m.error; });
+  Store.save(); toast(`جارٍ إعادة إرسال ${list.length} رسالة`); render();
 }
 
 /* =============== الإعدادات =============== */
 function settings() {
+  const hasOld = (() => { try { return !!localStorage.getItem(OLD_LOCAL_KEY); } catch (e) { return false; } })();
   return `
   <div class="topbar"><h2>الإعدادات</h2></div>
   <form id="setf" class="card">
@@ -790,50 +710,42 @@ function settings() {
       <div class="field"><label>عدد محاضرات الباقة الافتراضي</label><input name="defaultLectures" type="number" min="1" value="${S.defaultLectures}"></div>
     </div>
     <div class="field"><label><input type="checkbox" name="absentCounts" style="width:auto" ${S.absentCounts ? 'checked' : ''}> «لم يحضر» يُخصم من محاضرات الباقة</label></div>
+    <h3 style="margin-top:10px">رسالة تقييم الحصة</h3>
+    <div class="field"><label><input type="checkbox" name="sendEval" style="width:auto" ${S.sendEval ? 'checked' : ''}> إرسال تقييم الحصة لولي الأمر بعد كل «حضر»</label></div>
+    <p class="muted small">المتغيرات بالترتيب في قالب Meta: <b dir="ltr">{{1}}</b> اسم الطالب · <b dir="ltr">{{2}}</b> التاريخ · <b dir="ltr">{{3}}</b> التقييم · <b dir="ltr">{{4}}</b> ملاحظات المحفظ · <b dir="ltr">{{5}}</b> المحاضرات المتبقية</p>
+    <div class="field"><textarea name="tplEval" rows="6">${esc(S.tplEval)}</textarea></div>
     <h3 style="margin-top:10px">رسالة واتساب (انتهاء الباقة)</h3>
-    <p class="muted small">تُرسل لولي الأمر تلقائيًا عند تسجيل آخر محاضرة في الباقة. هذه هي الرسالة الوحيدة في النظام.</p>
+    <p class="muted small">تُرسل لولي الأمر عند تسجيل آخر محاضرة في الباقة — نفس نص القالب المعتمد من Meta.</p>
     <div class="field"><textarea name="tplEnd" rows="4">${esc(S.tplEnd)}</textarea></div>
-    <h3 style="margin-top:10px">قالب تقرير الحصة (للجروب)</h3>
-    <p class="muted small">المحفظ بيملأ التقرير، والنص ده بيتكوّن تلقائي وتبعته المشرفة للجروب. المتغيرات:
-      <code>{academy}</code> <code>{teacher}</code> <code>{student}</code> <code>{newSura}</code> <code>{newLevel}</code> <code>{revSura}</code> <code>{revLevel}</code>
-      <code>{hwNew}</code> <code>{hwRev}</code> <code>{tajweed}</code> <code>{shari}</code> <code>{duration}</code> <code>{lectureNo}</code> <code>{dayname}</code> <code>{date}</code></p>
-    <div class="field"><textarea name="tplGroup" rows="14" style="font-size:14px">${esc(S.tplGroup)}</textarea></div>
-    <button type="button" class="btn sm ghost" style="margin-bottom:12px" onclick="$('[name=tplGroup]').value=DEFAULT_TPL_GROUP">استرجاع القالب الافتراضي</button><br>
     <button class="btn">حفظ الإعدادات</button>
   </form>
   <form id="waf" class="card">
     <h3>ربط واتساب Business API</h3>
     <div class="note small">
-      1) من <b>Meta Business Manager ← WhatsApp Manager ← Message templates</b> أنشئ قالبًا من نوع <b>Utility</b> باللغة العربية بنفس نص الرسالة أعلاه، وانتظر الموافقة.<br>
-      2) انسخ <b>Phone Number ID</b> و<b>Permanent Access Token</b> (من System User) واسم القالب هنا.<br>
-      3) اضغط «إرسال رسالة اختبار» على رقمك قبل التفعيل.
+      الإرسال يتم من سيرفر Firebase (Cloud Function). التوكن ورقم Phone Number ID محفوظين كـ <b>Secrets</b> في Firebase — وليس هنا.<br>
+      المطلوب هنا فقط: أسماء القوالب المعتمدة من Meta، ثم تفعيل «تلقائي».
     </div>
     <div class="field"><label>طريقة الإرسال</label>
       <div class="radio-row">
         <label><input type="radio" name="waMode" value="manual" ${S.waMode !== 'api' ? 'checked' : ''}><span>يدوي (زر واتساب)</span></label>
         <label><input type="radio" name="waMode" value="api" ${S.waMode === 'api' ? 'checked' : ''}><span>تلقائي (Business API)</span></label>
       </div></div>
-    <div class="row">
-      <div class="field"><label>Phone Number ID</label><input name="waPhoneId" dir="ltr" value="${esc(S.waPhoneId)}"></div>
-      <div class="field"><label>Access Token</label><input name="waToken" type="password" dir="ltr" value="${esc(S.waToken)}" autocomplete="off"></div>
-    </div>
     <div class="row3">
-      <div class="field"><label>اسم القالب (Template name)</label><input name="waTemplate" dir="ltr" placeholder="subscription_renewal" value="${esc(S.waTemplate)}"></div>
+      <div class="field"><label>قالب انتهاء الباقة</label><input name="waTemplate" dir="ltr" placeholder="subscription_renewal" value="${esc(S.waTemplate)}"></div>
+      <div class="field"><label>قالب تقييم الحصة</label><input name="waEvalTemplate" dir="ltr" placeholder="session_evaluation" value="${esc(S.waEvalTemplate)}"></div>
       <div class="field"><label>لغة القالب</label><input name="waLang" dir="ltr" value="${esc(S.waLang || 'ar')}"></div>
       <div class="field"><label>إصدار API</label><input name="waVersion" dir="ltr" value="${esc(S.waVersion || 'v21.0')}"></div>
     </div>
-    <div class="field"><label>رابط خادم وسيط (اختياري — أكثر أمانًا)</label><input name="waProxy" dir="ltr" placeholder="https://..." value="${esc(S.waProxy)}">
-      <p class="muted small" style="margin:2px 0 0">لو موجود، يُرسل له الطلب بدل Meta مباشرة ويُترك التوكن على الخادم.</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
       <button class="btn">حفظ إعدادات واتساب</button>
       <div class="field" style="margin:0;flex:1;min-width:180px"><label>رقم للاختبار</label><input id="waTestTo" dir="ltr" placeholder="2010xxxxxxxx"></div>
       <button type="button" class="btn ghost" onclick="waTest()">إرسال رسالة اختبار</button>
     </div>
-
+    <p class="muted small" style="margin:8px 0 0">نتيجة الاختبار تظهر في صفحة «رسائل واتساب» خلال ثوانٍ.</p>
   </form>
   <form id="pwf" class="card">
-    <h3>بيانات دخول المدير</h3>
-    <p class="muted small">البريد: <b dir="ltr">${esc(Store.profile?.email || '')}</b></p>
+    <h3>كلمة مرور المدير</h3>
+    <p class="muted small">الحساب: <b dir="ltr">${esc(FB.auth.currentUser?.email || '')}</b></p>
     <div class="row">
       <div class="field"><label>كلمة المرور الحالية</label><input name="old" type="password" required autocomplete="current-password"></div>
       <div class="field"><label>كلمة المرور الجديدة</label><input name="pw" type="password" minlength="6" required autocomplete="new-password"></div>
@@ -841,15 +753,14 @@ function settings() {
     <button class="btn">تغيير كلمة المرور</button>
   </form>
   <div class="card">
-    <h3>النسخ الاحتياطي</h3>
-    <p class="muted small">البيانات محفوظة على Firebase ومتزامنة بين كل الأجهزة. خذ نسخة احتياطية بانتظام.</p>
-    ${hasLocalData() ? `<div class="note">📦 فيه بيانات قديمة محفوظة في المتصفح ده (من قبل Firebase): ${localSummary()}<br>
-      <button class="btn gold sm" style="margin-top:6px" onclick="migrateLocal()">نقلها إلى Firebase</button></div>` : ''}
+    <h3>البيانات</h3>
+    <p class="muted small">البيانات محفوظة على Firebase ومتزامنة بين كل الأجهزة.</p>
+    ${hasOld ? `<div class="note small">يوجد بيانات من النسخة القديمة محفوظة في هذا المتصفح.
+      <button class="btn sm gold" style="margin-right:8px" onclick="migrateLocal()">نقلها إلى Firebase</button></div>` : ''}
     <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn ghost" onclick="exportData()">⬇️ تصدير نسخة (JSON)</button>
       <label class="btn ghost" style="margin:0">⬆️ استيراد نسخة<input type="file" accept=".json" hidden onchange="importData(this.files[0])"></label>
-      <button class="btn ghost" onclick="loadDemo()">تحميل بيانات تجريبية</button>
-      <button class="btn danger" onclick="resetAll()">مسح كل البيانات</button>
+      ${!db.teachers.length && !db.students.length ? '<button class="btn ghost" onclick="loadDemo()">تحميل بيانات تجريبية</button>' : ''}
     </div>
   </div>`;
 }
@@ -860,119 +771,98 @@ document.addEventListener('submit', async e => {
     Object.assign(S, {
       academy: d.academy.trim() || 'Qraan', whatsapp: d.whatsapp.trim(), adminCountry: d.adminCountry,
       defaultLectures: Math.max(1, +d.defaultLectures || 8), absentCounts: !!d.absentCounts,
-      tplEnd: d.tplEnd.trim() || S.tplEnd, tplGroup: d.tplGroup.trim() || DEFAULT_TPL_GROUP,
+      tplEnd: d.tplEnd.trim() || S.tplEnd, sendEval: !!d.sendEval, tplEval: d.tplEval.trim() || S.tplEval,
     });
     Store.save(); toast('تم حفظ الإعدادات'); render();
   }
   if (e.target.id === 'waf') {
     e.preventDefault();
     const d = Object.fromEntries(new FormData(e.target));
-    Object.assign(S, { waMode: d.waMode, waPhoneId: d.waPhoneId.trim(), waToken: d.waToken.trim(), waTemplate: d.waTemplate.trim(),
-      waLang: d.waLang.trim() || 'ar', waVersion: d.waVersion.trim() || 'v21.0', waProxy: d.waProxy.trim() });
-    if (S.waMode === 'api' && !S.waProxy && !(S.waPhoneId && S.waToken && S.waTemplate)) { S.waMode = 'manual'; toast('أكمل Phone Number ID والتوكن واسم القالب أولًا', true); }
+    Object.assign(S, { waMode: d.waMode, waTemplate: d.waTemplate.trim(), waEvalTemplate: d.waEvalTemplate.trim(), waLang: d.waLang.trim() || 'ar', waVersion: d.waVersion.trim() || 'v21.0' });
+    if (S.waMode === 'api' && !S.waTemplate) { S.waMode = 'manual'; toast('اكتب اسم القالب أولًا', true); }
     else toast('تم حفظ إعدادات واتساب');
     Store.save(); render();
   }
   if (e.target.id === 'pwf') {
     e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.target));
+    const d = Object.fromEntries(new FormData(e.target)), u = FB.auth.currentUser;
     try {
-      const u = FB.auth.currentUser;
       await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, d.old));
-      await u.updatePassword(d.pw); toast('تم تغيير كلمة المرور ✅'); render();
-    } catch (err) { toast(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' ? 'كلمة المرور الحالية غير صحيحة' : errMsg(err), true); }
+      await u.updatePassword(d.pw); e.target.reset(); toast('تم تغيير كلمة المرور');
+    } catch (err) { toast(err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password' ? 'كلمة المرور الحالية غير صحيحة' : err.message, true); }
   }
 });
 
-async function waTest() {
+function waTest() {
   const to = normPhone($('#waTestTo').value, S.adminCountry);
   if (!to) return toast('اكتب رقم الاختبار', true);
-  const f = $('#waf'), d = Object.fromEntries(new FormData(f));
-  const saved = { ...S };
-  Object.assign(S, { waPhoneId: d.waPhoneId.trim(), waToken: d.waToken.trim(), waTemplate: d.waTemplate.trim(), waLang: d.waLang.trim() || 'ar', waVersion: d.waVersion.trim() || 'v21.0', waProxy: d.waProxy.trim() });
-  toast('جارٍ الإرسال...');
-  try { await apiSend({ phone: to, text: S.tplEnd }); toast('تم إرسال رسالة الاختبار ✅ — راجع واتساب'); }
-  catch (e) { toast('فشل: ' + e.message, true); }
-  Object.assign(S, saved);
+  if (S.waMode !== 'api') return toast('فعّل «تلقائي» واحفظ أولًا', true);
+  db.outbox.push({ id: uid(), kind: 'test', studentId: '', studentName: 'رسالة اختبار', teacherId: '', phone: to, text: S.tplEnd, createdAt: Date.now(), status: 'pending' });
+  Store.save(); toast('تم إرسال طلب الاختبار — تابع النتيجة في «رسائل واتساب»');
 }
 function exportData() {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ ...db, exportedAt: Date.now() }, null, 2)], { type: 'application/json' }));
   a.download = `qraan-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
 }
-/** دمج بيانات (نسخة JSON أو بيانات المتصفح القديمة) في Firebase — حسابات المحفظين والمشرفات تتعمل تلقائيًا */
-function mergeData(d) {
-  let n = 0;
-  COLS.forEach(col => (d[col] || []).forEach(o => {
-    if (!o?.id) return;
-    const copy = { ...o }; delete copy.uid; delete copy.authEmail;   // الحساب يتعمل من جديد في المشروع ده
-    const i = db[col].findIndex(x => x.id === o.id);
-    if (i >= 0) { if (db[col][i].uid) { copy.uid = db[col][i].uid; copy.authEmail = db[col][i].authEmail; } Object.assign(db[col][i], copy); } else db[col].push(copy);
-    n++;
-  }));
-  if (d.settings) {
-    const keep = { ...d.settings }; ['adminHash', 'adminEmail', 'msgV2'].forEach(k => delete keep[k]);
-    Object.assign(S, keep);
+
+/** استيراد بيانات (نسخة احتياطية أو بيانات النسخة القديمة) — دمج حسب المعرّف + إنشاء حسابات دخول المحفظين */
+async function importDb(d) {
+  if (!d || !Array.isArray(d.students) || !Array.isArray(d.teachers)) throw new Error('ملف غير صالح');
+  const box = openModal('جارٍ نقل البيانات', '<p id="impProg">جارٍ إنشاء حسابات المحفظين...</p><p class="muted small">لا تغلق الصفحة.</p>');
+  const failed = [];
+  for (const [i, t] of d.teachers.entries()) {
+    $('#impProg').textContent = `حسابات المحفظين: ${i + 1} من ${d.teachers.length}`;
+    const cur = Store.teacher(t.id);
+    if (cur?.uid) { t.uid = cur.uid; continue; }
+    try { await ensureTeacherAuth(t); } catch (e) { failed.push(t.name); console.error(e); }
   }
-  Store.save();
-  return n;
+  const up = (c, items) => items.forEach(x => { const i = db[c].findIndex(y => y.id === x.id); if (i >= 0) db[c][i] = x; else db[c].push(x); });
+  up('teachers', d.teachers); up('students', d.students); up('reports', d.reports || []);
+  if (d.settings) {
+    const { adminEmail, adminHash, waToken, waPhoneId, waProxy, msgV2, tplSession, tplReport, tplExtra, tplSchedule, teacherCanSend, excusedCounts, ...rest } = d.settings;
+    Object.assign(S, rest);
+  }
+  $('#impProg').textContent = 'جارٍ الحفظ في Firebase...';
+  await Store.save();
+  closeModal(); render();
+  toast(failed.length ? `تم النقل — تعذر إنشاء حساب: ${failed.join('، ')}` : `تم نقل ${d.teachers.length} محفظ و${d.students.length} طالب ✅`, !!failed.length);
 }
 function importData(file) {
   if (!file) return;
   const r = new FileReader();
-  r.onload = () => {
-    try {
-      const d = JSON.parse(r.result);
-      if (!d.settings || !Array.isArray(d.students)) throw 0;
-      if (!confirmBox('دمج بيانات الملف مع البيانات الحالية؟ (العناصر بنفس المعرّف هتتحدث)')) return;
-      const n = mergeData(d); toast(`تم استيراد ${n} عنصر — جارٍ إنشاء حسابات الدخول...`); render();
-    } catch { toast('ملف غير صالح', true); }
+  r.onload = async () => {
+    let d; try { d = JSON.parse(r.result); } catch { return toast('ملف غير صالح', true); }
+    if (!confirmBox('سيتم دمج بيانات الملف مع البيانات الحالية (العناصر بنفس المعرّف تُستبدل). متابعة؟')) return;
+    try { await importDb(d); } catch (e) { closeModal(); toast(e.message, true); }
   };
   r.readAsText(file);
 }
-function localData() { try { return JSON.parse(localStorage.getItem(DB_KEY)); } catch { return null; } }
-const hasLocalData = () => { const d = localData(); return !!(d && (d.teachers?.length || d.students?.length)); };
-const localSummary = () => { const d = localData(); return `${d.teachers?.length || 0} محفظ، ${d.supervisors?.length || 0} مشرفة، ${d.students?.length || 0} طالب، ${d.reports?.length || 0} محاضرة`; };
 async function migrateLocal() {
-  const d = localData(); if (!d) return;
-  if (!confirmBox(`نقل البيانات القديمة (${localSummary()}) إلى Firebase؟`)) return;
-  const n = mergeData(d); render();
-  toast(`جارٍ نقل ${n} عنصر وإنشاء حسابات الدخول — استنى لحد ما تخلص...`);
-  await Store._pending;
-  localStorage.setItem(DB_KEY + '_migrated', localStorage.getItem(DB_KEY)); localStorage.removeItem(DB_KEY);
-  toast('تم النقل إلى Firebase ✅ — المحفظين والمشرفات يدخلوا بنفس اسم المستخدم والرقم'); render();
+  let d; try { d = JSON.parse(localStorage.getItem(OLD_LOCAL_KEY)); } catch { d = null; }
+  if (!d) return toast('لا توجد بيانات قديمة', true);
+  if (!confirmBox(`نقل ${d.teachers?.length || 0} محفظ و${d.students?.length || 0} طالب من النسخة القديمة إلى Firebase؟`)) return;
+  try {
+    await importDb(d);
+    try { localStorage.setItem(OLD_LOCAL_KEY + '_migrated', localStorage.getItem(OLD_LOCAL_KEY)); localStorage.removeItem(OLD_LOCAL_KEY); } catch (e) { }
+    render();
+  } catch (e) { closeModal(); toast(e.message, true); }
 }
-function resetAll() {
-  if (!confirmBox('سيتم حذف كل المحفظين والمشرفات والطلاب والمحاضرات والرسائل نهائيًا من Firebase. متابعة؟')) return;
-  if (!confirmBox('تأكيد أخير: الحذف لا يمكن التراجع عنه. حذف كل البيانات؟')) return;
-  COLS.forEach(c => { db[c] = []; });
-  Store.save(); toast('جارٍ حذف البيانات...'); render();
-}
-function loadDemo() {
-  if (db.students.length && !confirmBox('سيتم إضافة بيانات تجريبية إلى بياناتك الحالية. متابعة؟')) return;
+async function loadDemo() {
   const t1 = { id: uid(), name: 'الشيخ أحمد سالم', username: 'ahmed', code: '1234', country: 'EG', phone: '01000000000', active: true, createdAt: Date.now() };
   const t2 = { id: uid(), name: 'الأستاذة مريم خالد', username: 'mariam', code: '5678', country: 'SA', phone: '0500000000', active: true, createdAt: Date.now() };
-  db.teachers.push(t1, t2);
-  let sup1 = db.supervisors.find(u => u.username === 'sara'), sup2 = db.supervisors.find(u => u.username === 'huda');
-  if (!sup1) db.supervisors.push(sup1 = { id: uid(), name: 'المشرفة سارة', username: 'sara', code: '1111', phone: '', active: true, createdAt: Date.now() });
-  if (!sup2) db.supervisors.push(sup2 = { id: uid(), name: 'المشرفة هدى', username: 'huda', code: '2222', phone: '', active: true, createdAt: Date.now() });
-  t1.supervisorId = sup1.id; t2.supervisorId = sup2.id;
-  const mk = (name, parent, phone, country, t, total, rem, slots) => ({ id: uid(), createdAt: Date.now() - 3 * 86400000, duration: 30, link: '', name, parentName: parent, parentPhone: phone, country, teacherId: t.id, total, remaining: rem, status: rem > 0 ? 'paid' : 'expired', attended: total - rem, absent: 0, excused: 0, renewals: [], notes: '', slots, groupName: 'قرآن | ' + name });
-  db.students.push(
+  const mk = (name, parent, phone, country, t, total, rem, slots) => ({ id: uid(), createdAt: Date.now() - 3 * 86400000, duration: 30, link: '', name, parentName: parent, parentPhone: phone, country, teacherId: t.id, total, remaining: rem, status: rem > 0 ? 'paid' : 'expired', attended: total - rem, absent: 0, excused: 0, renewals: [], notes: '', slots });
+  await importDb({ teachers: [t1, t2], reports: [], students: [
     mk('عمر محمد', 'محمد علي', '01011111111', 'EG', t1, 8, 5, [{ day: 0, time: '17:00' }, { day: 3, time: '17:00' }]),
     mk('سارة فهد', 'فهد العتيبي', '0551111111', 'SA', t1, 8, 1, [{ day: 1, time: '19:00' }, { day: 4, time: '19:00' }]),
     mk('يوسف ناصر', 'ناصر الكندري', '99111111', 'KW', t2, 12, 9, [{ day: 2, time: '16:30' }, { day: 5, time: '10:00' }]),
     mk('ليان أحمد', 'أحمد المنصوري', '0501111111', 'AE', t2, 8, 0, [{ day: 6, time: '18:00' }]),
     mk('زيد خليل', 'خليل الزعبي', '0791111111', 'JO', t1, 8, 6, [{ day: 0, time: '20:00' }, { day: 2, time: '20:00' }]),
-  );
-  Store.save(); toast('تمت إضافة البيانات التجريبية'); go('students');
+  ] });
+  go('students');
 }
 
-boot(IS_SUP ? 'supervisor' : 'admin').then(p => {
-  if (IS_SUP) ME = Store.supervisor(p.id);
-  window.WHO = IS_SUP ? { role: 'supervisor', id: ME.id, name: ME.name } : { role: 'admin', id: 'admin', name: 'المدير' };
-  let pend = false;   // تحديث مباشر لما حد تاني يغيّر البيانات (بدون ما نقاطع كتابة أو نافذة مفتوحة)
-  Store.onChange = () => { if (editing()) pend = true; else render(); };
-  setInterval(() => { if (pend && !editing()) { pend = false; render(); } }, 1500);
+boot('admin').then(() => {
+  Store.onChange = render;
   render();
-}).catch(() => {});
+});

@@ -3,7 +3,7 @@
 
 const db = Store.db;
 const S = db.settings;
-let me = null;   // المحفظ الحالي (بعد تحميل البيانات)
+let me = null;   // بيانات المحفظ الحالي — تُحمّل من Firebase
 
 const OPEN_BEFORE = 30 * 60000;   // يمكن تسجيل الحضور قبل الموعد بنصف ساعة
 const UNDO_WINDOW = 24 * 3600000; // يمكن التراجع خلال 24 ساعة
@@ -13,9 +13,8 @@ const views = { schedule, students, history };
 
 function go(tab) { current = tab; $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); render(); }
 function render() {
-  applyBrand();
   $('#main').innerHTML = views[current]();
-  $('#sideFoot').innerHTML = `${esc(me.name)}<br>${countryLabel(me.country)}${me.supervisorId ? `<br>المشرفة: ${esc(supervisorName(me.supervisorId))}` : ''}`;
+  $('#sideFoot').innerHTML = `${esc(me.name)}<br>${countryLabel(me.country)}`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
 const myStudents = () => db.students.filter(s => s.teacherId === me.id);
@@ -23,13 +22,11 @@ const myStudents = () => db.students.filter(s => s.teacherId === me.id);
 /* =============== جدولي =============== */
 function statsBar() {
   const t = teacherStats(me.id, me.country);
-  const g = teacherReportStats(me.country, 'all').find(x => x.t.id === me.id) || { ready: 0 };
   return `<div class="stats">
     <div class="stat"><div class="n">${t.month}</div><div class="l">محاضرات هذا الشهر</div></div>
     <div class="stat gold"><div class="n">${t.total}</div><div class="l">إجمالي المحاضرات</div></div>
     <div class="stat"><div class="n">${t.present}</div><div class="l">حضر</div></div>
     <div class="stat danger"><div class="n">${t.absent}</div><div class="l">لم يحضر</div></div>
-    <div class="stat warn"><div class="n">${g.ready}</div><div class="l">تقارير لسه ما اتبعتتش للجروب</div></div>
   </div>`;
 }
 
@@ -40,11 +37,10 @@ function sessionRow(o) {
   const no = r ? r.lectureNo : st.total - st.remaining + 1 + countBefore(o);
   let actions;
   if (r) {
-    actions = `<span class="pill ${r.attendance === 'present' ? 'ok' : 'danger'}">${r.attendance === 'present' ? '✅ حضر' : '❌ لم يحضر'}</span>
-      ${r.attendance === 'present' ? repBtn(r) : ''}
-      ${now - r.createdAt < UNDO_WINDOW && r.group?.status !== 'sent' ? `<button class="btn sm ghost" onclick="undo('${r.id}')">تراجع</button>` : ''}`;
+    actions = `<span class="pill ${r.attendance === 'present' ? 'ok' : 'danger'}">${r.attendance === 'present' ? '✅ حضر' + (r.grade ? ' · ' + esc(r.grade) : '') : '❌ لم يحضر'}</span>
+      ${now - r.createdAt < UNDO_WINDOW ? `<button class="btn sm ghost" onclick="undo('${r.id}')">تراجع</button>` : ''}`;
   } else if (canRecord) {
-    actions = `<button class="btn sm" onclick="reportModal('${o.key}')">✅ حضر + التقرير</button>
+    actions = `<button class="btn sm" onclick="mark('${o.key}','present')">✅ حضر</button>
       <button class="btn sm danger" onclick="mark('${o.key}','absent')">❌ لم يحضر</button>`;
   } else {
     actions = `<span class="muted small">${inText(Math.round((o.ts - now) / 60000))}</span>`;
@@ -86,63 +82,31 @@ function schedule() {
   ${expired.length ? `<div class="note">طلاب اشتراكهم منتهي (لا محاضرات لهم حتى التجديد): ${expired.map(s => esc(s.name)).join('، ')}</div>` : ''}`;
 }
 
-const repBtn = r => r.group?.status === 'sent' ? `<span class="pill ok">📤 اتبعت للجروب</span>`
-  : r.group ? `<button class="btn sm ghost" onclick="editReport('${r.id}')">📝 تعديل التقرير</button>`
-  : `<button class="btn sm gold" onclick="editReport('${r.id}')">📝 اكتب التقرير</button>`;
-
-/** حضر → قالب تقرير الحصة → حفظ (يظهر للمشرفة جاهز للإرسال) */
-function reportModal(key) {
+function mark(key, attendance) {
   const o = _occ.find(x => x.key === key);
   if (!o) return toast('المحاضرة غير موجودة', true);
-  const st = o.st, no = st.total - st.remaining + 1 + countBefore(o);
-  openModal(`تقرير الحصة — ${esc(st.name)}`, reportFormHtml(st),
-    `<button class="btn" onclick="saveNewReport('${key}')">💾 حفظ التقرير</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
-  bindReportPreview({ studentId: st.id, teacherId: me.id, lectureNo: no, date: o.date });
+  if (attendance !== 'present') return save(o, attendance);
+  // «حضر» ← اختيار التقييم
+  openModal(`تقييم ${esc(o.st.name)}`, `
+    <p class="muted small" style="margin-top:0">اختر تقييم الحصة${S.sendEval ? ' — سيُرسل لولي الأمر على واتساب' : ''}</p>
+    <div class="grades">${GRADES.map((g, i) => `<button type="button" class="grade g${i}" data-g="${g}">${['🌟', '👍', '🙂', '📌'][i]} ${g}</button>`).join('')}</div>
+    <div class="field" style="margin-top:12px"><label>ملاحظة لولي الأمر (اختياري)</label><input id="gNote" maxlength="120" placeholder="مثال: حفظ سورة النبأ كاملة"></div>`,
+    `<button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $$('.grade').forEach(b => b.onclick = () => { const notes = $('#gNote').value; closeModal(); save(o, 'present', { grade: b.dataset.g, notes }); });
 }
-async function saveNewReport(key) {
-  const o = _occ.find(x => x.key === key);
-  if (!o) return toast('المحاضرة غير موجودة', true);
-  const f = readReportForm();
-  if (!f.newSura && !f.revSura) return toast('اكتب سورة الحفظ الجديد أو المراجعة على الأقل', true);
+async function save(o, attendance, extra) {
   try {
-    const { msgs } = recordSession(o.st, me, o, 'present', f);
-    closeModal(); render();
-    if (!msgs.length) return toast('تم حفظ التقرير ✅ — جاهز للإرسال عند المشرفة');
-    const r = await deliver(msgs[0]);
-    toast(r === 'sent' ? 'تم حفظ التقرير — وآخر محاضرة في الباقة: اتبعت تذكير الاشتراك ✅'
-      : 'تم حفظ التقرير — آخر محاضرة في الباقة، تم إبلاغ الإدارة', r === 'failed');
-  } catch (err) { toast(err.message, true); }
-}
-function editReport(repId) {
-  const r = db.reports.find(x => x.id === repId), st = Store.student(r?.studentId);
-  if (!r || !st) return;
-  if (r.group?.status === 'sent') return toast('التقرير اتبعت للجروب بالفعل', true);
-  openModal(`تقرير الحصة — ${esc(st.name)}`, reportFormHtml(st, r.report || {}),
-    `<button class="btn" onclick="saveEditReport('${r.id}')">💾 حفظ التقرير</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
-  bindReportPreview(r);
-}
-function saveEditReport(repId) {
-  const r = db.reports.find(x => x.id === repId), f = readReportForm();
-  if (!f.newSura && !f.revSura) return toast('اكتب سورة الحفظ الجديد أو المراجعة على الأقل', true);
-  try { setGroupReport(r, f); closeModal(); toast('تم حفظ التقرير ✅'); render(); } catch (e) { toast(e.message, true); }
-}
-
-async function mark(key, attendance) {
-  const o = _occ.find(x => x.key === key);
-  if (!o) return toast('المحاضرة غير موجودة', true);
-  if (attendance === 'absent' && !confirmBox(`تسجيل «لم يحضر» لـ ${o.st.name}؟`)) return;
-  try {
-    const { msgs } = recordSession(o.st, me, o, attendance);
+    const { msgs } = recordSession(o.st, me, o, attendance, extra);
     render();
-    if (!msgs.length) return toast(`تم التسجيل: ${ATT[attendance]}`);
-    const r = await deliver(msgs[0]);
-    toast(r === 'sent' ? 'آخر محاضرة في الباقة — تم إرسال تذكير الاشتراك لولي الأمر ✅'
-      : r === 'failed' ? 'آخر محاضرة — تعذر إرسال الواتساب، ستتابعه الإدارة' : 'آخر محاضرة في الباقة — تم إبلاغ الإدارة', r === 'failed');
+    const auto = S.waMode === 'api', ev = msgs.some(m => m.kind === 'eval'), end = msgs.some(m => m.kind === 'renew');
+    const parts = [`تم التسجيل: ${ATT[attendance]}${extra?.grade ? ' — ' + extra.grade : ''}`];
+    if (ev) parts.push(auto ? 'وأُرسل التقييم لولي الأمر' : 'والتقييم في صندوق الرسائل');
+    if (end) parts.push(auto ? 'وآخر محاضرة — سيصل تذكير الاشتراك تلقائيًا' : 'وآخر محاضرة — تم إبلاغ الإدارة');
+    toast(parts.join(' · '));
   } catch (err) { toast(err.message, true); }
 }
 function undo(repId) {
-  if (db.reports.find(x => x.id === repId)?.group?.status === 'sent') return toast('التقرير اتبعت للجروب — كلّم الإدارة للتعديل', true);
-  if (!confirmBox('إلغاء تسجيل هذه المحاضرة وتقريرها؟')) return;
+  if (!confirmBox('إلغاء تسجيل هذه المحاضرة؟')) return;
   undoSession(repId); toast('تم الإلغاء'); render();
 }
 
@@ -155,7 +119,6 @@ function students() {
     const active = isActive(s), nx = nextSession(s, me.country), done = db.reports.filter(r => r.studentId === s.id && r.teacherId === me.id).length;
     return `<div class="scard ${active ? '' : 'expired'}">
       <div class="head"><div><div class="name">${esc(s.name)}</div><div class="muted small">${countryLabel(s.country)}</div></div>${statusPill(s)}</div>
-      <div class="kv"><span>الجروب</span><span>${esc(s.groupName || '—')}</span></div>
       <div class="kv"><span>المحاضرات المتبقية</span><span><b>${s.remaining}</b> / ${s.total}</span></div>
       <div class="kv"><span>سجّلت له</span><span>${done} محاضرة</span></div>
       <div class="kv"><span>حضر / لم يحضر</span><span>✅ ${s.attended || 0} · ❌ ${(s.absent || 0) + (s.excused || 0)}</span></div>
@@ -178,23 +141,21 @@ function history() {
   <div class="toolbar"><select onchange="histMonth=this.value;render()"><option value="">كل الشهور</option>
     ${months.map(m => `<option value="${m}" ${m === histMonth ? 'selected' : ''}>${m}</option>`).join('')}</select>
     <span class="muted" style="align-self:center">${reps.length} محاضرة</span></div>
-  ${reps.length ? `<div class="table-wrap"><table><tr><th>#</th><th>اليوم والتاريخ</th><th>الوقت</th><th>الطالب</th><th>الحضور</th><th>رقم المحاضرة</th><th>المتبقي بعدها</th><th>تقرير الجروب</th></tr>
+  ${reps.length ? `<div class="table-wrap"><table><tr><th>#</th><th>اليوم والتاريخ</th><th>الوقت</th><th>الطالب</th><th>الحضور</th><th>التقييم</th><th>رقم المحاضرة</th><th>المتبقي بعدها</th></tr>
     ${reps.map((r, i) => { const w = repWhen(r, me.country); return `<tr><td>${reps.length - i}</td><td>${fmtDayDate(w.iso)}</td><td>${w.time ? fmtTime(w.time) : '—'}</td>
       <td>${esc(Store.student(r.studentId)?.name || '—')}</td><td>${r.attendance === 'present' ? '<span class="pill ok">حضر</span>' : '<span class="pill danger">لم يحضر</span>'}</td>
-      <td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td><td>${r.attendance === 'present' ? repBtn(r) : '—'}</td></tr>`; }).join('')}
+      <td>${esc(r.grade || '—')}${r.notes ? `<div class="muted small">${esc(r.notes)}</div>` : ''}</td><td>${r.lectureNo || '—'}</td><td>${r.remainingAfter}</td></tr>`; }).join('')}
   </table></div>` : '<div class="card empty">لم تسجل محاضرات بعد.</div>'}`;
 }
 
-boot('teacher').then(p => {
-  me = Store.teacher(p.id);
-  window.WHO = { role: 'teacher', id: me.id, name: me.name };
-  const editing = () => $('#modal') || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
-  let pend = false;
+boot('teacher').then(() => {
+  const meId = db.teachers[0].id;
+  me = db.teachers[0];
   Store.onChange = () => {
-    if (me.active === false || !Store.teacher(me.id)) { alert('تم إيقاف الحساب — تواصل مع الإدارة'); return logout(); }
-    if (editing()) pend = true; else render();
+    me = Store.teacher(meId);
+    if (!me || me.active === false) return logout();
+    render();
   };
   render();
-  setInterval(() => { if (!editing() && current === 'schedule') render(); }, 60000); // تحديث الأزرار كل دقيقة
-  setInterval(() => { if (pend && !editing()) { pend = false; render(); } }, 1500);
-}).catch(() => {});
+  setInterval(() => { if (current === 'schedule' && !$('#modal')) render(); }, 60000); // تحديث الأزرار كل دقيقة
+});

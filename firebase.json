@@ -1,0 +1,12 @@
+{
+  "firestore": { "rules": "firestore.rules" },
+  "functions": {
+    "source": ".",
+    "ignore": [
+      "node_modules", ".git", "*.zip", "firebase-debug.log",
+      "*.html", "*.css", "*.md",
+      "core.js", "admin.js", "teacher.js", "firebase-config.js",
+      "firestore.rules", "firebase.json"
+    ]
+  }
+}
