@@ -13,6 +13,7 @@ const views = { schedule, students, history };
 
 function go(tab) { current = tab; $$('#nav button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); render(); }
 function render() {
+  applyBrand();
   $('#main').innerHTML = views[current]();
   $('#sideFoot').innerHTML = `${esc(me.name)}<br>${countryLabel(me.country)}${me.supervisorId ? `<br>المشرفة: ${esc(supervisorName(me.supervisorId))}` : ''}`;
 }

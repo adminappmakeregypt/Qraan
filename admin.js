@@ -28,6 +28,7 @@ function go(tab) {
   render();
 }
 function render() {
+  applyBrand();
   $('#main').innerHTML = views[current]();
   const pending = db.outbox.filter(m => m.status === 'pending').length;
   $('#outBadge')?.classList.toggle('hidden', !pending); if ($('#outBadge')) $('#outBadge').textContent = pending;

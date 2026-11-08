@@ -288,6 +288,12 @@ async function resolveProfile(user) {
 }
 const authUser = () => new Promise(res => { const off = FB.auth.onAuthStateChanged(u => { off(); res(u); }); });
 
+/** اسم التطبيق = اسم الأكاديمية من الإعدادات (القائمة الجانبية + عنوان الصفحة) */
+function applyBrand(name = Store.db.settings.academy) {
+  const n = (name || '').trim() || 'Qraan';
+  $$('.brand').forEach(b => { b.textContent = n; });
+  document.title = document.title.replace(/^[^—]+—/, n + ' —');
+}
 function fatal(html) { document.body.innerHTML = `<div class="auth-wrap"><div class="auth-card">${html}</div></div>`; }
 
 /** تشغيل الصفحة: يتحقق من الدخول ثم يربط البيانات المباشرة حسب الدور */
@@ -328,6 +334,7 @@ async function boot(role) {
   if (!meDoc || meDoc.active === false) { await FB.auth.signOut(); alert('الحساب موقوف أو محذوف — تواصل مع الإدارة'); location.href = 'index.html'; throw new Error('inactive'); }
   Store._ready = true;
   document.body.classList.remove('loading');
+  applyBrand();
   return p;
 }
 

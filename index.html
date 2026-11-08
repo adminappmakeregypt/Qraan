@@ -74,7 +74,7 @@
     try {
       owner = (await FB.fs.collection('meta').doc('owner').get()).exists;
       const pub = await FB.fs.collection('meta').doc('public').get();
-      if (pub.exists && pub.data().academy) $('#academyName').textContent = pub.data().academy;
+      if (pub.exists && pub.data().academy) { applyBrand(pub.data().academy); $('#academyName').textContent = 'نظام إدارة حلقات التحفيظ'; }
     } catch (e) { toast('تعذر الاتصال: ' + errMsg(e), true); }
     $(owner ? '#loginBox' : '#setupForm').classList.remove('hidden');
   })();
