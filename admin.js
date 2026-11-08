@@ -6,7 +6,7 @@ const S = db.settings;
 let current = 'dashboard';
 const filters = { teacher: '', status: '', country: '', q: '' };
 
-const views = { dashboard, assign, teachers, students, schedule, reports, outbox, settings };
+const views = { dashboard, assign, intake, teachers, students, schedule, reports, outbox, settings };
 
 function go(tab) {
   current = tab;
@@ -17,6 +17,8 @@ function render() {
   $('#main').innerHTML = views[current]();
   const pending = db.outbox.filter(m => m.status === 'pending').length;
   $('#outBadge').textContent = pending; $('#outBadge').classList.toggle('hidden', !pending);
+  const newIn = (db.intake || []).filter(x => x.status === 'new').length;
+  $('#inBadge').textContent = newIn; $('#inBadge').classList.toggle('hidden', !newIn);
   $('#sideFoot').innerHTML = `${esc(S.academy)}<br><span dir="ltr">${esc(FB.auth?.currentUser?.email || '')}</span>`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
@@ -300,15 +302,138 @@ function removeExtra(id, eid) {
   st.extra = (st.extra || []).filter(e => e.id !== eid); Store.save(); render();
 }
 
+/* =============== سجل البيانات (طلبات المحفظين) =============== */
+let inTab = 'new';
+const regLink = () => location.href.replace(/[^/]*$/, '') + 'register.html';
+function intake() {
+  const all = (db.intake || []).slice().sort((a, b) => b.createdAt - a.createdAt);
+  const list = all.filter(x => inTab === 'all' || x.status === inTab);
+  const cnt = s => all.filter(x => x.status === s).length;
+  const shareText = `السلام عليكم\nبرجاء تسجيل بياناتك وبيانات طلابك من الرابط:\n${regLink()}`;
+  return `
+  <div class="topbar"><h2>سجل البيانات</h2>
+    <div class="seg" style="margin:0;min-width:300px">
+      <button class="${inTab === 'new' ? 'active' : ''}" onclick="inTab='new';render()">جديدة (${cnt('new')})</button>
+      <button class="${inTab === 'imported' ? 'active' : ''}" onclick="inTab='imported';render()">تم استيرادها (${cnt('imported')})</button>
+      <button class="${inTab === 'all' ? 'active' : ''}" onclick="inTab='all';render()">الكل</button></div></div>
+  <div class="card">
+    <h3>🔗 رابط الصفحة للمحفظين</h3>
+    <p class="muted small">ابعت الرابط للمحفظين — يفتحوه من غير تسجيل دخول، ويكتبوا بياناتهم وبيانات طلابهم. البيانات توصل هنا وتستوردها بضغطة.</p>
+    <div class="linkbox"><input readonly value="${esc(regLink())}" onclick="this.select()">
+      <button class="btn sm" onclick="navigator.clipboard.writeText('${esc(regLink())}').then(()=>toast('تم نسخ الرابط'))">نسخ</button>
+      <a class="btn sm wa" target="_blank" href="https://wa.me/?text=${encodeURIComponent(shareText)}">مشاركة على واتساب</a>
+      <a class="btn sm ghost" target="_blank" href="${esc(regLink())}">فتح الصفحة</a></div>
+  </div>
+  ${list.length ? list.map(x => {
+    const t = x.teacher || {}, st = x.students || [];
+    const match = db.teachers.find(y => normPhone(y.phone, y.country) && normPhone(y.phone, y.country) === normPhone(t.phone, t.country));
+    return `<div class="card intake ${x.status}">
+      <div class="ihead"><div><b style="font-size:17px">${esc(t.name)}</b> <span class="muted small">${countryLabel(t.country)} · <span dir="ltr">${esc(t.phone)}</span></span>
+        <div class="small">المشرفة: <b>${esc(t.supervisor || '—')}</b> · ${st.length} طالب · ${st.reduce((n, s) => n + (s.slots || []).length, 0)} حصة أسبوعيًا</div>
+        ${t.notes ? `<div class="small muted">📝 ${esc(t.notes)}</div>` : ''}
+        ${match && x.status === 'new' ? `<div class="small" style="color:var(--warn)">⚠️ رقمه مطابق لمحفظ موجود: ${esc(match.name)}</div>` : ''}</div>
+        <div style="text-align:left"><span class="muted small">${fmtDateTime(x.createdAt)}</span><br>
+          ${x.status === 'imported' ? `<span class="pill ok">تم الاستيراد</span>` : `<span class="pill gold">جديدة</span>`}</div></div>
+      <details style="margin-top:8px"><summary class="small" style="cursor:pointer;color:var(--primary)">عرض الطلاب</summary>
+        ${st.map(s => `<div class="ist"><b>${esc(s.name)}</b> ${countryLabel(s.country)} · ولي الأمر: ${esc(s.parentName || '—')} <span dir="ltr">${esc(s.parentPhone)}</span><br>
+          المتبقي <b>${s.remaining}</b> من ${s.total} · ${s.status === 'paid' ? 'مدفوع' : 'منتهي'}${s.startDate ? ' · آخر دفع ' + esc(s.startDate) : ''} · ${s.duration} د<br>
+          المواعيد (${s.tzBase === 'S' ? 'بتوقيت الطالب' : 'بتوقيت المحفظ'}): ${(s.slots || []).map(fmtSlot).join(' · ') || '—'}
+          ${s.level ? `<br>المستوى: ${esc(s.level)}` : ''}${s.notes ? `<br><span class="muted">📝 ${esc(s.notes)}</span>` : ''}</div>`).join('')}
+      </details>
+      <div class="actions" style="display:flex;gap:6px;margin-top:10px">
+        ${x.status === 'new' ? `<button class="btn sm" onclick="importIntake('${x.id}')">استيراد للنظام</button>` : ''}
+        <button class="btn sm danger" onclick="delIntake('${x.id}')">حذف</button></div>
+    </div>`;
+  }).join('') : '<div class="card empty">لا توجد بيانات هنا بعد.</div>'}`;
+}
+function delIntake(id) {
+  if (!confirmBox('حذف هذه البيانات؟')) return;
+  db.intake = db.intake.filter(x => x.id !== id); Store.save(); render();
+}
+function importIntake(id) {
+  const x = db.intake.find(y => y.id === id); if (!x) return;
+  const t = x.teacher, st = x.students || [];
+  const match = db.teachers.find(y => normPhone(y.phone, y.country) && normPhone(y.phone, y.country) === normPhone(t.phone, t.country));
+  const digits = String(t.phone).replace(/\D/g, '');
+  let uname = 't' + digits.slice(-4); while (db.teachers.some(y => y.username.toLowerCase() === uname)) uname += Math.floor(Math.random() * 10);
+  const dupOf = s => db.students.find(y => y.name.trim() === s.name.trim() && normPhone(y.parentPhone, y.country) === normPhone(s.parentPhone, s.country));
+  openModal(`استيراد بيانات ${esc(t.name)}`, `
+    <form id="imf">
+      <div class="radio-row" style="margin-bottom:12px">
+        <label><input type="radio" name="mode" value="new" ${match ? '' : 'checked'}><span>محفظ جديد</span></label>
+        <label><input type="radio" name="mode" value="old" ${match ? 'checked' : ''} ${db.teachers.length ? '' : 'disabled'}><span>إضافة لمحفظ موجود</span></label>
+      </div>
+      <div id="imNew">
+        <div class="row">
+          <div class="field"><label>الاسم</label><input name="name" value="${esc(t.name)}"></div>
+          <div class="field"><label>المشرفة</label><input name="supervisor" value="${esc(t.supervisor || '')}"></div>
+        </div>
+        <div class="row">
+          <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" dir="ltr" value="${esc(uname)}"></div>
+          <div class="field"><label>رقم الدخول</label><input name="code" inputmode="numeric" pattern="[0-9]{3,10}" value="${Math.floor(1000 + Math.random() * 9000)}"></div>
+        </div>
+      </div>
+      <div id="imOld" class="field hidden"><label>المحفظ</label><select name="tid">${db.teachers.map(y => `<option value="${y.id}" ${match && match.id === y.id ? 'selected' : ''}>${esc(y.name)}</option>`).join('')}</select></div>
+      <h4 style="margin:10px 0 6px">الطلاب</h4>
+      ${st.map((s, i) => { const d = dupOf(s); return `<label class="ist" style="display:flex;gap:10px;align-items:flex-start;font-weight:500">
+        <input type="checkbox" name="s${i}" style="width:auto;margin-top:4px" ${d ? '' : 'checked'}>
+        <span><b>${esc(s.name)}</b> ${countryLabel(s.country)} · المتبقي ${s.remaining}/${s.total} · ${(s.slots || []).length} حصة
+        ${d ? `<br><span style="color:var(--warn)">⚠️ موجود بالفعل في النظام (مع ${teacherName(d.teacherId)})</span>` : ''}</span></label>`; }).join('')}
+    </form>`,
+    `<button class="btn" form="imf">استيراد</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  const f = $('#imf'), sync = () => { const old = f.mode.value === 'old'; $('#imNew').classList.toggle('hidden', old); $('#imOld').classList.toggle('hidden', !old); };
+  f.addEventListener('change', sync); sync();
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const btn = $('.modal .foot .btn'); btn.disabled = true; btn.textContent = 'جارٍ الاستيراد...';
+    let teacher;
+    if (f.mode.value === 'old') teacher = Store.teacher(f.tid.value);
+    else {
+      const un = f.username.value.trim();
+      if (!un || db.teachers.some(y => y.username.toLowerCase() === un.toLowerCase())) { btn.disabled = false; btn.textContent = 'استيراد'; return toast('اسم المستخدم مستخدم بالفعل أو فارغ', true); }
+      teacher = { id: uid(), createdAt: Date.now(), name: f.name.value.trim() || t.name, username: un, code: f.code.value.trim(), country: t.country, phone: t.phone, supervisor: f.supervisor.value.trim(), active: true };
+      try { await ensureTeacherAuth(teacher); }
+      catch (err) { btn.disabled = false; btn.textContent = 'استيراد'; return toast('تعذر إنشاء حساب الدخول: ' + (err.code === 'auth/email-already-in-use' ? 'اسم المستخدم مستخدم' : err.message), true); }
+      db.teachers.push(teacher);
+    }
+    let n = 0;
+    st.forEach((s, i) => {
+      if (!f['s' + i].checked) return;
+      const base = s.tzBase === 'S' ? s.country : teacher.country;
+      const notes = [s.level && 'المستوى: ' + s.level, s.startDate && 'آخر دفع: ' + s.startDate, s.notes].filter(Boolean).join(' — ');
+      db.students.push({
+        id: uid(), createdAt: Date.now(), name: s.name, parentName: s.parentName || '', parentPhone: s.parentPhone, country: s.country,
+        teacherId: teacher.id, total: Math.max(1, +s.total || 1), remaining: Math.max(0, +s.remaining || 0),
+        status: (+s.remaining > 0 && s.status !== 'expired') ? 'paid' : 'expired',
+        attended: 0, absent: 0, excused: 0, renewals: [], duration: +s.duration || 30, link: s.link || '', notes,
+        slots: (s.slots || []).map(sl => { const c = convertSlot({ day: +sl.day, time: sl.time }, base, s.country); return { day: c.day, time: c.time, since: Date.now() }; }),
+      }); n++;
+    });
+    Object.assign(x, { status: 'imported', importedAt: Date.now(), teacherId: teacher.id });
+    await Store.save();
+    closeModal(); asg.teacher = teacher.id; render();
+    if (f.mode.value !== 'new') return toast(`تم استيراد ${n} طالب مع ${teacher.name} ✅`);
+    const site = location.href.replace(/[^/]*$/, '');
+    const msg = `السلام عليكم ${teacher.name}\nتم تسجيلك في نظام Qraan ✅\nرابط الدخول: ${site}\nاسم المستخدم: ${teacher.username}\nالرقم: ${teacher.code}\nمن صفحة «جدولي» سجّل حضور كل حصة واختار التقييم.`;
+    const ph = normPhone(teacher.phone, teacher.country);
+    openModal('تم الاستيراد ✅', `<p>تم إنشاء حساب <b>${esc(teacher.name)}</b> وإضافة <b>${n}</b> طالب بمواعيدهم في الجدول.</p>
+      <div class="note"><b>بيانات دخول المحفظ:</b><br>اسم المستخدم: <b dir="ltr">${esc(teacher.username)}</b><br>الرقم: <b dir="ltr">${esc(teacher.code)}</b></div>
+      <div class="msg-preview">${esc(msg)}</div>`,
+      `${ph ? `<a class="btn wa" target="_blank" href="${waLink(ph, msg)}">إرسال للمحفظ على واتساب</a>` : ''}
+       <button class="btn ghost" onclick="navigator.clipboard.writeText(${esc(JSON.stringify(msg))}).then(()=>toast('تم النسخ'))">نسخ</button>
+       <button class="btn ghost" onclick="closeModal()">تم</button>`);
+  };
+}
+
 /* =============== المحفظين =============== */
 function teachers() {
   return `
   <div class="topbar"><h2>المحفظين</h2><button class="btn" onclick="teacherForm()">+ إضافة محفظ</button></div>
   ${db.teachers.length ? `<div class="table-wrap"><table>
-    <tr><th>الاسم</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>البلد</th><th>الهاتف</th><th>الطلاب</th><th>محاضرات الشهر</th><th>إجمالي المحاضرات</th><th>الحالة</th><th></th></tr>
+    <tr><th>الاسم</th><th>المشرفة</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>البلد</th><th>الهاتف</th><th>الطلاب</th><th>محاضرات الشهر</th><th>إجمالي المحاضرات</th><th>الحالة</th><th></th></tr>
     ${db.teachers.map(t => {
       const sts = db.students.filter(s => s.teacherId === t.id), ts = teacherStats(t.id, S.adminCountry);
-      return `<tr><td><b>${esc(t.name)}</b></td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
+      return `<tr><td><b>${esc(t.name)}</b></td><td>${esc(t.supervisor || '—')}</td><td dir="ltr" style="text-align:right">${esc(t.username)}</td><td><code>${esc(t.code)}</code></td>
       <td>${countryLabel(t.country)}</td><td dir="ltr" style="text-align:right">${esc(t.phone || '—')}</td>
       <td>${sts.filter(isActive).length} نشط / ${sts.length}</td>
       <td><b>${ts.month}</b></td><td>${ts.total} <span class="muted small">(✅ ${ts.present} · ❌ ${ts.absent})</span></td>
@@ -336,6 +461,8 @@ function teacherForm(id) {
         <div class="field"><label>البلد</label><select name="country">${countryOptions(t.country)}</select></div>
         <div class="field"><label>الهاتف</label><input name="phone" value="${esc(t.phone)}"></div>
       </div>
+      <div class="field"><label>المشرفة</label><input name="supervisor" value="${esc(t.supervisor || '')}" list="supList">
+        <datalist id="supList">${[...new Set(db.teachers.map(x => x.supervisor).filter(Boolean))].map(x => `<option value="${esc(x)}">`).join('')}</datalist></div>
       <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${t.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
     </form>`,
     `<button class="btn" form="tf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
@@ -346,7 +473,7 @@ function teacherForm(id) {
     if (!id && db.teachers.some(x => x.username.toLowerCase() === uname.toLowerCase())) return toast('اسم المستخدم مستخدم بالفعل', true);
     const btn = $('.modal .foot .btn'); btn.disabled = true; btn.textContent = 'جارٍ الحفظ...';
     const oldCode = id ? t.code : null;
-    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), active: !!f.active };
+    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), supervisor: (f.supervisor || '').trim(), active: !!f.active };
     const target = id ? { ...t, ...data } : { id: uid(), createdAt: Date.now(), ...data };
     try { await ensureTeacherAuth(target, oldCode); }
     catch (err) {
@@ -563,7 +690,7 @@ function reports() {
 
   // ملخص كل المحفظين
   const q = lec.q.trim().toLowerCase();
-  let sum = db.teachers.filter(t => !q || t.name.toLowerCase().includes(q)).map(t => {
+  let sum = db.teachers.filter(t => !q || (t.name + ' ' + (t.supervisor || '')).toLowerCase().includes(q)).map(t => {
     const rs = inMonth.filter(x => x.r.teacherId === t.id);
     const p = rs.filter(x => x.r.attendance === 'present').length;
     const missed = lec.month === nowM ? teacherSessions(t.id, C, 31, 0).filter(o => !o.rec && o.ts < now && o.date.startsWith(nowM)).length : 0;
@@ -580,7 +707,7 @@ function reports() {
   <div class="topbar"><h2>محاضرات المحفظين</h2><button class="btn ghost sm" onclick="exportLectures()">⬇️ تصدير Excel</button></div>
   <div class="toolbar">
     <select onchange="lec.month=this.value;render()">${months.map(m => `<option value="${m}" ${m === lec.month ? 'selected' : ''}>${m === nowM ? 'الشهر الحالي — ' : ''}${m}</option>`).join('')}<option value="all" ${lec.month === 'all' ? 'selected' : ''}>كل الفترات</option></select>
-    <input placeholder="🔍 بحث باسم المحفظ" value="${esc(lec.q)}" oninput="lec.q=this.value;debounceLec()">
+    <input placeholder="🔍 بحث باسم المحفظ أو المشرفة" value="${esc(lec.q)}" oninput="lec.q=this.value;debounceLec()">
     <select onchange="lec.sort=this.value;render()">
       <option value="done" ${lec.sort === 'done' ? 'selected' : ''}>ترتيب: الأكثر محاضرات</option>
       <option value="missed" ${lec.sort === 'missed' ? 'selected' : ''}>ترتيب: الأكثر محاضرات لم تُسجل</option>
@@ -595,7 +722,7 @@ function reports() {
   ${T ? lecDetail(T, inMonth, nowM) : '<p class="muted small">اضغط «التفاصيل» أمام أي محفظ لعرض محاضراته وتعديلها.</p>'}
   <div class="table-wrap"><table>
     <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>آخر محاضرة</th><th></th></tr>
-    ${sum.map(x => `<tr class="${x.t.id === lec.teacher ? 'sel' : ''}"><td><b>${esc(x.t.name)}</b><div class="muted small">${countryLabel(x.t.country)}</div></td><td>${x.active}</td>
+    ${sum.map(x => `<tr class="${x.t.id === lec.teacher ? 'sel' : ''}"><td><b>${esc(x.t.name)}</b><div class="muted small">${countryLabel(x.t.country)}${x.t.supervisor ? ' · المشرفة: ' + esc(x.t.supervisor) : ''}</div></td><td>${x.active}</td>
       <td><b style="font-size:17px">${x.n}</b></td><td>${x.p}</td><td>${x.a}</td>
       <td>${x.missed ? `<span class="pill warn">${x.missed}</span>` : '—'}</td>
       <td class="small">${x.last ? `${fmtDayDate(x.last.iso)}${x.last.time ? ' ' + fmtTime(x.last.time) : ''}` : '—'}</td>

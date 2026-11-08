@@ -7,6 +7,7 @@
 | `index.html` | الدخول: المدير (بريد + كلمة مرور) / المحفظ (اسم مستخدم + رقم) |
 | `admin.html` + `admin.js` | لوحة المدير |
 | `teacher.html` + `teacher.js` | صفحة المحفظ |
+| `register.html` + `register.js` | **سجل البيانات** — صفحة عامة بدون تسجيل دخول، المحفظ يكتب بياناته وبيانات طلابه |
 | `core.js` | الاتصال بـ Firebase + منطق المحاضرات والمواعيد |
 | `style.css` | التصميم |
 | `firestore.rules` | قواعد الحماية — تُلصق في Firebase ← Firestore ← Rules |

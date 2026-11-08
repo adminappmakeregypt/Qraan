@@ -130,10 +130,10 @@ async function deleteTeacherAuth(t) {
 
 /* ---------- التخزين (Firestore مع مزامنة لحظية) ---------- */
 const stable = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)) ? Object.keys(x).sort().reduce((o, key) => (o[key] = x[key], o), {}) : x);
-const COLLS = ['teachers', 'students', 'reports', 'outbox'];
+const COLLS = ['teachers', 'students', 'reports', 'outbox', 'intake'];
 const Store = {
-  db: { settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [] },
-  _last: { teachers: {}, students: {}, reports: {}, outbox: {}, settings: '' },
+  db: { settings: defaultSettings(), teachers: [], students: [], reports: [], outbox: [], intake: [] },
+  _last: { teachers: {}, students: {}, reports: {}, outbox: {}, intake: {}, settings: '' },
   role: null, uid: null, onChange: null, _subs: [],
   load() { return this.db; },
   teacher(id) { return this.db.teachers.find(t => t.id === id); },
@@ -144,7 +144,7 @@ const Store = {
     this.role = role; this.uid = uid;
     const fs = FB.fs;
     const qs = role === 'admin'
-      ? { teachers: fs.collection('teachers'), students: fs.collection('students'), reports: fs.collection('reports'), outbox: fs.collection('outbox') }
+      ? { teachers: fs.collection('teachers'), students: fs.collection('students'), reports: fs.collection('reports'), outbox: fs.collection('outbox'), intake: fs.collection('intake') }
       : { teachers: fs.collection('teachers').where('uid', '==', uid), students: fs.collection('students').where('teacherUid', '==', uid), reports: fs.collection('reports').where('teacherUid', '==', uid) };
     const listen = (ref, onData) => new Promise((res, rej) => {
       let first = true;

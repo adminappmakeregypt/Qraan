@@ -198,3 +198,30 @@ tr.sel td{background:var(--soft)}
 .grade.g1{border-color:#cfe6d9;background:#f6fbf8;color:#1e6b4a}
 .grade.g2{border-color:#efdcae;background:#fdf8ec;color:#8a6200}
 .grade.g3{border-color:#f0c9c4;background:#fdf3f2;color:#a3352a}
+
+/* ===== سجل البيانات (صفحة عامة) ===== */
+body.reg{background:var(--bg)}
+.reg-head{background:var(--primary-2);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:10}
+.reg-brand{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:12px}
+.reg-brand .mark{width:44px;height:44px;border-radius:13px;background:#fff;color:var(--primary);display:grid;place-items:center;font-family:'Amiri',serif;font-size:26px;font-weight:700}
+.reg-brand b{display:block;font-size:20px}.reg-brand small{opacity:.8;font-size:13px}
+.reg-main{max-width:760px;margin:0 auto;padding:16px 16px 110px}
+.reg-main h3{font-size:18px}.reg-main h4{font-size:15px;margin:14px 0 8px;color:var(--primary-2)}
+.req{color:var(--danger)}
+.field.err input,.field.err select,.field.err textarea{border-color:var(--danger);background:#fff7f6}
+.st-card{border-right:4px solid var(--primary)}
+.st-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.st-head h3{margin:0}.st-acts{display:flex;gap:6px}
+.st-count{margin:20px 0 8px}.st-count h2{font-size:20px}
+.tzr{margin-bottom:10px}.tzr label{font-size:13.5px;padding:8px}
+.add-st{margin:4px 0 16px;border-style:dashed;border-color:#b7d3c4;color:var(--primary)}
+.send-bar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;box-shadow:0 -6px 20px rgba(0,0,0,.06);z-index:10}
+.send-bar .btn{min-width:170px;padding:12px}
+.done-card{text-align:center;padding:36px 20px}.done-ic{font-size:56px}.done-card h2{margin:8px 0}
+/* admin intake */
+.intake{border-right:4px solid var(--gold)}
+.intake.imported{border-right-color:var(--ok);opacity:.85}
+.intake .ihead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.ist{font-size:13.5px;border-top:1px dashed var(--line);padding:8px 0}
+.linkbox{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.linkbox input{flex:1;min-width:220px;direction:ltr;background:#faf8f2}

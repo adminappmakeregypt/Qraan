@@ -50,6 +50,19 @@ service cloud.firestore {
       allow delete: if isAdmin() || (mine(resource.data) && request.time.toMillis() - resource.data.createdAt < 86400000);
     }
 
+    // سجل البيانات: صفحة عامة — أي حد يقدر يرسل (إنشاء فقط)، والمدير بس اللي يقرأ ويعدّل
+    match /intake/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['id', 'createdAt', 'status', 'version', 'teacher', 'students'])
+        && request.resource.data.id == id
+        && request.resource.data.status == 'new'
+        && request.resource.data.teacher is map
+        && request.resource.data.teacher.name is string
+        && request.resource.data.teacher.name.size() > 1 && request.resource.data.teacher.name.size() <= 60
+        && request.resource.data.students is list
+        && request.resource.data.students.size() >= 1 && request.resource.data.students.size() <= 80;
+      allow read, update, delete: if isAdmin();
+    }
+
     match /outbox/{id} {
       allow read, update: if isAdmin();
       allow create: if isAdmin() || (signedIn() && request.resource.data.createdBy == request.auth.uid
