@@ -189,3 +189,18 @@ tr.sel td{background:var(--soft)}
 .split .week .slot,.split .week .add-slot{font-size:12.5px}
 @media(max-width:1100px){.split .week{grid-template-columns:repeat(7,minmax(110px,1fr))}}
 .detail-card{border:2px solid var(--primary)}
+
+/* ===== تقارير الجروبات ===== */
+.gcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.gcard{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;border-right:5px solid var(--gold)}
+.gcard.opened{border-right-color:var(--warn)}
+.gcard.sent{border-right-color:var(--ok);background:#fbfdfb}
+.gcard-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.gcard-head b{font-size:17px}
+.gname{background:var(--soft);color:var(--primary-2);border-radius:10px;padding:10px 12px;font-weight:800;font-size:16px}
+.gact{display:flex;gap:8px;flex-wrap:wrap}
+.gact .btn.wa{flex:1;padding:12px;font-size:16px}
+details summary{cursor:pointer;color:var(--primary);font-weight:700}
+details .msg-preview{margin-top:8px;max-height:320px;overflow:auto}
+.rsec{font-weight:800;color:var(--primary);border-bottom:1px solid var(--line);padding-bottom:4px;margin:6px 0 10px}
+@media(max-width:600px){.gcards{grid-template-columns:1fr}}

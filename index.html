@@ -32,9 +32,15 @@
     <div id="loginBox" class="hidden">
       <div class="seg">
         <button type="button" data-tab="teacher" class="active">محفظ</button>
+        <button type="button" data-tab="supervisor">مشرفة</button>
         <button type="button" data-tab="admin">المدير</button>
       </div>
       <form id="teacherForm">
+        <div class="field"><label>اسم المستخدم</label><input name="username" required autocomplete="username"></div>
+        <div class="field"><label>الرقم الخاص بك</label><input name="code" inputmode="numeric" required></div>
+        <button class="btn block">دخول</button>
+      </form>
+      <form id="supervisorForm" class="hidden">
         <div class="field"><label>اسم المستخدم</label><input name="username" required autocomplete="username"></div>
         <div class="field"><label>الرقم الخاص بك</label><input name="code" inputmode="numeric" required></div>
         <button class="btn block">دخول</button>
@@ -58,6 +64,7 @@
   const ses = Session.get();
   if (ses?.role === 'admin') location.href = 'admin.html';
   else if (ses?.role === 'teacher' && Store.teacher(ses.id)) location.href = 'teacher.html';
+  else if (ses?.role === 'supervisor' && Store.supervisor(ses.id)) location.href = 'supervisor.html';
 
   if (!S.adminHash) $('#setupForm').classList.remove('hidden');
   else $('#loginBox').classList.remove('hidden');
@@ -65,6 +72,7 @@
   $$('.seg button').forEach(b => b.onclick = () => {
     $$('.seg button').forEach(x => x.classList.toggle('active', x === b));
     $('#teacherForm').classList.toggle('hidden', b.dataset.tab !== 'teacher');
+    $('#supervisorForm').classList.toggle('hidden', b.dataset.tab !== 'supervisor');
     $('#adminForm').classList.toggle('hidden', b.dataset.tab !== 'admin');
   });
 
@@ -93,6 +101,15 @@
     if (!t) return toast('اسم المستخدم أو الرقم غير صحيح', true);
     if (t.active === false) return toast('الحساب موقوف — تواصل مع الإدارة', true);
     Session.set({ role: 'teacher', id: t.id }); location.href = 'teacher.html';
+  };
+
+  $('#supervisorForm').onsubmit = e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const u = db.supervisors.find(x => x.username.toLowerCase() === f.username.trim().toLowerCase() && String(x.code) === f.code.trim());
+    if (!u) return toast('اسم المستخدم أو الرقم غير صحيح', true);
+    if (u.active === false) return toast('الحساب موقوف — تواصل مع الإدارة', true);
+    Session.set({ role: 'supervisor', id: u.id }); location.href = 'supervisor.html';
   };
 </script>
 </body>

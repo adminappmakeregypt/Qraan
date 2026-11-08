@@ -4,10 +4,11 @@
 if (Session.get()?.role !== 'admin') location.href = 'index.html';
 const db = Store.load();
 const S = db.settings;
+window.WHO = { role: 'admin', id: 'admin', name: 'المدير' };
 let current = 'dashboard';
 const filters = { teacher: '', status: '', country: '', q: '' };
 
-const views = { dashboard, assign, teachers, students, schedule, reports, outbox, settings };
+const views = { dashboard, assign, teachers, supervisors, students, schedule, reports, groups: () => groupReportsView(S.adminCountry), outbox, settings };
 
 function go(tab) {
   current = tab;
@@ -18,6 +19,8 @@ function render() {
   $('#main').innerHTML = views[current]();
   const pending = db.outbox.filter(m => m.status === 'pending').length;
   $('#outBadge').textContent = pending; $('#outBadge').classList.toggle('hidden', !pending);
+  const gr = groupReports().filter(r => r.group.status !== 'sent').length;
+  $('#grpBadge').textContent = gr; $('#grpBadge').classList.toggle('hidden', !gr);
   $('#sideFoot').innerHTML = `${esc(S.academy)}<br>${esc(S.adminEmail)}`;
 }
 $$('#nav button[data-tab]').forEach(b => b.onclick = () => go(b.dataset.tab));
@@ -48,6 +51,7 @@ function dashboard() {
     <div class="stat warn"><div class="n">${low.length}</div><div class="l">قارب على الانتهاء (≤ 2)</div></div>
     <div class="stat gold clickable" onclick="go('reports')"><div class="n">${todayReports.length}</div><div class="l">محاضرات سُجلت اليوم ←</div></div>
     <div class="stat"><div class="n">${pending.length}</div><div class="l">رسائل في انتظار الإرسال</div></div>
+    <div class="stat warn clickable" onclick="grp.tab='ready';go('groups')"><div class="n">${groupReports().filter(r => r.group.status !== 'sent').length}</div><div class="l">تقارير جاهزة للجروبات ←</div></div>
   </div>
   <div class="row">
     <div class="card"><h3>حلقات اليوم (بتوقيتك)</h3>
@@ -161,6 +165,7 @@ function sessionModal(teacherId, day, studentId, slotIdx) {
           <div class="field"><label>بلد الطالب</label><select name="ncountry">${countryOptions(t.country)}</select></div></div>
         <div class="row"><div class="field"><label>واتساب ولي الأمر</label><input name="nphone" dir="ltr"></div>
           <div class="field"><label>اسم ولي الأمر</label><input name="nparent"></div></div>
+        <div class="field"><label>اسم جروب واتساب</label><input name="ngroup" placeholder="مثال: قرآن | أحمد محمد"></div>
         <div class="row"><div class="field"><label>عدد محاضرات الباقة</label><input name="ntotal" type="number" min="1" value="${S.defaultLectures}"></div>
           <div class="field"><label>مدة الحصة (دقيقة)</label><input name="ndur" type="number" min="10" step="5" value="30"></div></div>
       </div>
@@ -201,7 +206,7 @@ function sessionModal(teacherId, day, studentId, slotIdx) {
       const n = Math.max(1, +f.ntotal.value || S.defaultLectures);
       st = { id: uid(), createdAt: Date.now(), name: f.nname.value.trim(), parentName: f.nparent.value.trim(), parentPhone: f.nphone.value.trim(),
         country: f.ncountry.value, teacherId: t.id, total: n, remaining: n, status: 'paid', attended: 0, absent: 0, excused: 0, renewals: [],
-        notes: '', link: '', duration: Math.max(10, +f.ndur.value || 30), slots: [] };
+        notes: '', link: '', duration: Math.max(10, +f.ndur.value || 30), slots: [], groupName: f.ngroup.value.trim() };
       db.students.push(st);
     } else if (st.teacherId !== t.id) st.teacherId = t.id;
     const p = tzPreview(st, t, f.day.value, f.time.value, f.base.value, false, null);
@@ -344,7 +349,7 @@ function teacherForm(id) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     const uname = f.username.trim();
-    if (db.teachers.some(x => x.id !== id && x.username.toLowerCase() === uname.toLowerCase())) return toast('اسم المستخدم مستخدم بالفعل', true);
+    if (usernameTaken(uname, id)) return toast('اسم المستخدم مستخدم بالفعل', true);
     const data = { name: f.name.trim(), username: uname, code: f.code.trim(), country: f.country, phone: f.phone.trim(), active: !!f.active };
     if (id) Object.assign(t, data); else db.teachers.push({ id: uid(), createdAt: Date.now(), ...data });
     Store.save(); closeModal(); toast('تم الحفظ'); render();
@@ -358,6 +363,48 @@ function delTeacher(id) {
   Store.save(); render();
 }
 
+/* =============== المشرفات =============== */
+function supervisors() {
+  return `
+  <div class="topbar"><h2>المشرفات</h2><button class="btn" onclick="supervisorForm()">+ إضافة مشرفة</button></div>
+  <p class="muted small">المشرفة تدخل بـ «اسم المستخدم + الرقم» وتشوف تقارير الحصص الجاهزة وتبعتها للجروبات من واتساب موبايلها.</p>
+  ${db.supervisors.length ? `<div class="table-wrap"><table>
+    <tr><th>الاسم</th><th>اسم المستخدم</th><th>رقم الدخول</th><th>الهاتف</th><th>تقارير أرسلتها</th><th>الحالة</th><th></th></tr>
+    ${db.supervisors.map(u => `<tr><td><b>${esc(u.name)}</b></td><td dir="ltr" style="text-align:right">${esc(u.username)}</td><td><code>${esc(u.code)}</code></td>
+      <td dir="ltr" style="text-align:right">${esc(u.phone || '—')}</td>
+      <td>${groupReports().filter(r => r.group.status === 'sent' && r.group.sentBy?.id === u.id).length}</td>
+      <td>${u.active === false ? '<span class="pill gray">موقوف</span>' : '<span class="pill ok">فعال</span>'}</td>
+      <td><div class="actions"><button class="btn sm ghost" onclick="supervisorForm('${u.id}')">تعديل</button>
+        <button class="btn sm danger" onclick="delSupervisor('${u.id}')">حذف</button></div></td></tr>`).join('')}
+  </table></div>` : '<div class="card empty">لا توجد مشرفات بعد.</div>'}`;
+}
+function supervisorForm(id) {
+  const u = id ? Store.supervisor(id) : { name: '', username: '', code: String(Math.floor(1000 + Math.random() * 9000)), phone: '', active: true };
+  openModal(id ? 'تعديل مشرفة' : 'إضافة مشرفة', `
+    <form id="uf">
+      <div class="field"><label>الاسم</label><input name="name" required value="${esc(u.name)}"></div>
+      <div class="row">
+        <div class="field"><label>اسم المستخدم (للدخول)</label><input name="username" required dir="ltr" value="${esc(u.username)}"></div>
+        <div class="field"><label>رقم الدخول</label><input name="code" required inputmode="numeric" pattern="[0-9]{3,10}" value="${esc(u.code)}"></div>
+      </div>
+      <div class="field"><label>الهاتف</label><input name="phone" dir="ltr" value="${esc(u.phone)}"></div>
+      <div class="field"><label><input type="checkbox" name="active" style="width:auto" ${u.active !== false ? 'checked' : ''}> الحساب فعال</label></div>
+    </form>`,
+    `<button class="btn" form="uf">حفظ</button><button class="btn ghost" onclick="closeModal()">إلغاء</button>`);
+  $('#uf').onsubmit = e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target)), uname = f.username.trim();
+    if (usernameTaken(uname, id)) return toast('اسم المستخدم مستخدم بالفعل', true);
+    const data = { name: f.name.trim(), username: uname, code: f.code.trim(), phone: f.phone.trim(), active: !!f.active };
+    if (id) Object.assign(u, data); else db.supervisors.push({ id: uid(), createdAt: Date.now(), ...data });
+    Store.save(); closeModal(); toast('تم الحفظ'); render();
+  };
+}
+function delSupervisor(id) {
+  if (!confirmBox('حذف المشرفة؟ (سجل التقارير اللي أرسلتها يفضل موجود)')) return;
+  db.supervisors = db.supervisors.filter(u => u.id !== id); Store.save(); render();
+}
+
 /* =============== الطلاب =============== */
 function students() {
   const q = filters.q.trim().toLowerCase();
@@ -365,7 +412,7 @@ function students() {
     (!filters.teacher || s.teacherId === filters.teacher) &&
     (!filters.country || s.country === filters.country) &&
     (!filters.status || (filters.status === 'paid' ? isActive(s) : !isActive(s))) &&
-    (!q || (s.name + ' ' + s.parentName + ' ' + s.parentPhone).toLowerCase().includes(q)));
+    (!q || (s.name + ' ' + s.parentName + ' ' + s.parentPhone + ' ' + (s.groupName || '')).toLowerCase().includes(q)));
   return `
   <div class="topbar"><h2>الطلاب</h2><button class="btn" onclick="studentForm()" ${db.teachers.length ? '' : 'disabled title="أضف محفظًا أولًا"'}>+ إضافة طالب</button></div>
   <div class="toolbar">
@@ -378,7 +425,7 @@ function students() {
   ${list.length ? `<div class="table-wrap"><table>
     <tr><th>الطالب</th><th>ولي الأمر</th><th>المحفظ</th><th>المواعيد (توقيت الطالب)</th><th>المتبقي</th><th>الحضور</th><th>الاشتراك</th><th></th></tr>
     ${list.map(s => `<tr>
-      <td><b>${esc(s.name)}</b><div class="muted small">${countryLabel(s.country)}</div></td>
+      <td><b>${esc(s.name)}</b><div class="muted small">${countryLabel(s.country)}</div><div class="small">${s.groupName ? '👥 ' + esc(s.groupName) : '<span style="color:var(--danger)">بدون جروب</span>'}</div></td>
       <td>${esc(s.parentName || '—')}<div class="small" dir="ltr" style="text-align:right">${esc(s.parentPhone)}</div></td>
       <td>${teacherName(s.teacherId)}</td>
       <td><div class="list-slots">${isActive(s) ? (slotsIn(s, s.country).map(x => `<span>${fmtSlot(x)}</span>`).join('') || '<span class="muted">لا مواعيد</span>') : '<span class="muted">موقوفة لحين التجديد</span>'}</div></td>
@@ -429,7 +476,10 @@ function studentForm(id, presetTeacher) {
         <div class="field"><label>اسم ولي الأمر</label><input name="parentName" value="${esc(s.parentName)}"></div>
         <div class="field"><label>واتساب ولي الأمر</label><input name="parentPhone" required dir="ltr" placeholder="05xxxxxxxx أو 01xxxxxxxxx" value="${esc(s.parentPhone)}"></div>
       </div>
-      <div class="field"><label>المحفظ</label><select name="teacherId" required>${teacherOptions(s.teacherId)}</select></div>
+      <div class="row">
+        <div class="field"><label>المحفظ</label><select name="teacherId" required>${teacherOptions(s.teacherId)}</select></div>
+        <div class="field"><label>اسم جروب واتساب (زي ما هو في واتساب)</label><input name="groupName" placeholder="مثال: قرآن | أحمد محمد" value="${esc(s.groupName || '')}"></div>
+      </div>
       <div class="row3">
         <div class="field"><label>عدد محاضرات الباقة</label><input name="total" type="number" min="1" value="${s.total}"></div>
         <div class="field"><label>المحاضرات المتبقية</label><input name="remaining" type="number" min="0" value="${s.remaining}"></div>
@@ -455,7 +505,7 @@ function studentForm(id, presetTeacher) {
     const data = {
       name: d.name.trim(), parentName: d.parentName.trim(), parentPhone: d.parentPhone.trim(), country: d.country, teacherId: d.teacherId,
       total: Math.max(1, +d.total || 1), remaining: Math.max(0, +d.remaining || 0), notes: d.notes.trim(), slots: readSlots(),
-      link: d.link.trim(), duration: Math.max(10, +d.duration || 30),
+      link: d.link.trim(), duration: Math.max(10, +d.duration || 30), groupName: (d.groupName || '').trim(),
     };
     if (!id || JSON.stringify(s.slots) !== JSON.stringify(data.slots)) data.slotsAt = Date.now();
     data.status = data.remaining <= 0 ? 'expired' : d.status;
@@ -559,7 +609,8 @@ function reports() {
     const p = rs.filter(x => x.r.attendance === 'present').length;
     const missed = lec.month === nowM ? teacherSessions(t.id, C, 31, 0).filter(o => !o.rec && o.ts < now && o.date.startsWith(nowM)).length : 0;
     const last = rs.sort((a, b) => (b.r.sessionTs || b.r.createdAt) - (a.r.sessionTs || a.r.createdAt))[0];
-    return { t, n: rs.length, p, a: rs.length - p, missed, students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
+    const gs = rs.filter(x => x.r.group);
+    return { t, n: rs.length, p, a: rs.length - p, missed, gSent: gs.filter(x => x.r.group.status === 'sent').length, gReady: gs.filter(x => x.r.group.status !== 'sent').length, students: new Set(rs.map(x => x.r.studentId)).size, last: last ? last.w : null,
       active: db.students.filter(s => s.teacherId === t.id && isActive(s)).length };
   });
   const sorters = { done: (a, b) => b.n - a.n, name: (a, b) => a.t.name.localeCompare(b.t.name, 'ar'), missed: (a, b) => b.missed - a.missed };
@@ -585,12 +636,13 @@ function reports() {
   </div>
   ${T ? lecDetail(T, inMonth, nowM) : '<p class="muted small">اضغط «التفاصيل» أمام أي محفظ لعرض محاضراته وتعديلها.</p>'}
   <div class="table-wrap"><table>
-    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>آخر محاضرة</th><th></th></tr>
+    <tr><th>المحفظ</th><th>طلاب نشطين</th><th>المحاضرات المسجلة</th><th>حضر</th><th>لم يحضر</th><th>لم تُسجل</th><th>تقارير اتبعت للجروب</th><th>آخر محاضرة</th><th></th></tr>
     ${sum.map(x => `<tr class="${x.t.id === lec.teacher ? 'sel' : ''}"><td><b>${esc(x.t.name)}</b><div class="muted small">${countryLabel(x.t.country)}</div></td><td>${x.active}</td>
       <td><b style="font-size:17px">${x.n}</b></td><td>${x.p}</td><td>${x.a}</td>
       <td>${x.missed ? `<span class="pill warn">${x.missed}</span>` : '—'}</td>
+      <td>${x.gSent}${x.gReady ? ` <span class="pill gold">${x.gReady} جاهز</span>` : ''}</td>
       <td class="small">${x.last ? `${fmtDayDate(x.last.iso)}${x.last.time ? ' ' + fmtTime(x.last.time) : ''}` : '—'}</td>
-      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">لا نتائج</td></tr>'}
+      <td><button class="btn sm ${x.t.id === lec.teacher ? '' : 'ghost'}" onclick="pickLec('${x.t.id}')">التفاصيل</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">لا نتائج</td></tr>'}
   </table></div>
 `;
 }
@@ -701,6 +753,12 @@ function settings() {
     <h3 style="margin-top:10px">رسالة واتساب (انتهاء الباقة)</h3>
     <p class="muted small">تُرسل لولي الأمر تلقائيًا عند تسجيل آخر محاضرة في الباقة. هذه هي الرسالة الوحيدة في النظام.</p>
     <div class="field"><textarea name="tplEnd" rows="4">${esc(S.tplEnd)}</textarea></div>
+    <h3 style="margin-top:10px">قالب تقرير الحصة (للجروب)</h3>
+    <p class="muted small">المحفظ بيملأ التقرير، والنص ده بيتكوّن تلقائي وتبعته المشرفة للجروب. المتغيرات:
+      <code>{academy}</code> <code>{teacher}</code> <code>{student}</code> <code>{newSura}</code> <code>{newLevel}</code> <code>{revSura}</code> <code>{revLevel}</code>
+      <code>{hwNew}</code> <code>{hwRev}</code> <code>{tajweed}</code> <code>{shari}</code> <code>{duration}</code> <code>{lectureNo}</code> <code>{dayname}</code> <code>{date}</code></p>
+    <div class="field"><textarea name="tplGroup" rows="14" style="font-size:14px">${esc(S.tplGroup)}</textarea></div>
+    <button type="button" class="btn sm ghost" style="margin-bottom:12px" onclick="$('[name=tplGroup]').value=DEFAULT_TPL_GROUP">استرجاع القالب الافتراضي</button><br>
     <button class="btn">حفظ الإعدادات</button>
   </form>
   <form id="waf" class="card">
@@ -760,7 +818,7 @@ document.addEventListener('submit', async e => {
     Object.assign(S, {
       academy: d.academy.trim() || 'Qraan', whatsapp: d.whatsapp.trim(), adminCountry: d.adminCountry,
       defaultLectures: Math.max(1, +d.defaultLectures || 8), absentCounts: !!d.absentCounts,
-      tplEnd: d.tplEnd.trim() || S.tplEnd,
+      tplEnd: d.tplEnd.trim() || S.tplEnd, tplGroup: d.tplGroup.trim() || DEFAULT_TPL_GROUP,
     });
     Store.save(); toast('تم حفظ الإعدادات'); render();
   }
@@ -821,7 +879,8 @@ function loadDemo() {
   const t1 = { id: uid(), name: 'الشيخ أحمد سالم', username: 'ahmed', code: '1234', country: 'EG', phone: '01000000000', active: true, createdAt: Date.now() };
   const t2 = { id: uid(), name: 'الأستاذة مريم خالد', username: 'mariam', code: '5678', country: 'SA', phone: '0500000000', active: true, createdAt: Date.now() };
   db.teachers.push(t1, t2);
-  const mk = (name, parent, phone, country, t, total, rem, slots) => ({ id: uid(), createdAt: Date.now() - 3 * 86400000, duration: 30, link: '', name, parentName: parent, parentPhone: phone, country, teacherId: t.id, total, remaining: rem, status: rem > 0 ? 'paid' : 'expired', attended: total - rem, absent: 0, excused: 0, renewals: [], notes: '', slots });
+  if (!db.supervisors.some(u => u.username === 'sara')) db.supervisors.push({ id: uid(), name: 'المشرفة سارة', username: 'sara', code: '1111', phone: '', active: true, createdAt: Date.now() });
+  const mk = (name, parent, phone, country, t, total, rem, slots) => ({ id: uid(), createdAt: Date.now() - 3 * 86400000, duration: 30, link: '', name, parentName: parent, parentPhone: phone, country, teacherId: t.id, total, remaining: rem, status: rem > 0 ? 'paid' : 'expired', attended: total - rem, absent: 0, excused: 0, renewals: [], notes: '', slots, groupName: 'قرآن | ' + name });
   db.students.push(
     mk('عمر محمد', 'محمد علي', '01011111111', 'EG', t1, 8, 5, [{ day: 0, time: '17:00' }, { day: 3, time: '17:00' }]),
     mk('سارة فهد', 'فهد العتيبي', '0551111111', 'SA', t1, 8, 1, [{ day: 1, time: '19:00' }, { day: 4, time: '19:00' }]),
